@@ -1,0 +1,452 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-26T19:11:35Z",
+  "title": "Design System: MoneyPrinterTurbo",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Forest Green",
+        "tonalRamp": [
+          "oklch(15% 0.0725 160.11)",
+          "oklch(26% 0.0725 160.11)",
+          "oklch(38% 0.0725 160.11)",
+          "oklch(49% 0.0725 160.11)",
+          "oklch(61% 0.0725 160.11)",
+          "oklch(72% 0.0725 160.11)",
+          "oklch(84% 0.0725 160.11)",
+          "oklch(95% 0.0725 160.11)"
+        ]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Warm Canvas",
+        "tonalRamp": [
+          "oklch(15% 0.0079 106.55)",
+          "oklch(26% 0.0079 106.55)",
+          "oklch(38% 0.0079 106.55)",
+          "oklch(49% 0.0079 106.55)",
+          "oklch(61% 0.0079 106.55)",
+          "oklch(72% 0.0079 106.55)",
+          "oklch(84% 0.0079 106.55)",
+          "oklch(95% 0.0079 106.55)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Working Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0000 0.00)",
+          "oklch(26% 0.0000 0.00)",
+          "oklch(38% 0.0000 0.00)",
+          "oklch(49% 0.0000 0.00)",
+          "oklch(61% 0.0000 0.00)",
+          "oklch(72% 0.0000 0.00)",
+          "oklch(84% 0.0000 0.00)",
+          "oklch(95% 0.0000 0.00)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Charcoal Ink",
+        "tonalRamp": [
+          "oklch(15% 0.0115 145.26)",
+          "oklch(26% 0.0115 145.26)",
+          "oklch(38% 0.0115 145.26)",
+          "oklch(49% 0.0115 145.26)",
+          "oklch(61% 0.0115 145.26)",
+          "oklch(72% 0.0115 145.26)",
+          "oklch(84% 0.0115 145.26)",
+          "oklch(95% 0.0115 145.26)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted Leaf",
+        "tonalRamp": [
+          "oklch(15% 0.0148 149.04)",
+          "oklch(26% 0.0148 149.04)",
+          "oklch(38% 0.0148 149.04)",
+          "oklch(49% 0.0148 149.04)",
+          "oklch(61% 0.0148 149.04)",
+          "oklch(72% 0.0148 149.04)",
+          "oklch(84% 0.0148 149.04)",
+          "oklch(95% 0.0148 149.04)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Quiet Separator",
+        "tonalRamp": [
+          "oklch(15% 0.0126 137.79)",
+          "oklch(26% 0.0126 137.79)",
+          "oklch(38% 0.0126 137.79)",
+          "oklch(49% 0.0126 137.79)",
+          "oklch(61% 0.0126 137.79)",
+          "oklch(72% 0.0126 137.79)",
+          "oklch(84% 0.0126 137.79)",
+          "oklch(95% 0.0126 137.79)"
+        ]
+      },
+      "control-line": {
+        "role": "neutral",
+        "displayName": "Control Boundary",
+        "tonalRamp": [
+          "oklch(15% 0.0169 145.37)",
+          "oklch(26% 0.0169 145.37)",
+          "oklch(38% 0.0169 145.37)",
+          "oklch(49% 0.0169 145.37)",
+          "oklch(61% 0.0169 145.37)",
+          "oklch(72% 0.0169 145.37)",
+          "oklch(84% 0.0169 145.37)",
+          "oklch(95% 0.0169 145.37)"
+        ]
+      },
+      "soft": {
+        "role": "neutral",
+        "displayName": "Quiet Green Wash",
+        "tonalRamp": [
+          "oklch(15% 0.0109 149.86)",
+          "oklch(26% 0.0109 149.86)",
+          "oklch(38% 0.0109 149.86)",
+          "oklch(49% 0.0109 149.86)",
+          "oklch(61% 0.0109 149.86)",
+          "oklch(72% 0.0109 149.86)",
+          "oklch(84% 0.0109 149.86)",
+          "oklch(95% 0.0109 149.86)"
+        ]
+      },
+      "danger": {
+        "role": "semantic",
+        "displayName": "Error Ink",
+        "tonalRamp": [
+          "oklch(15% 0.1543 27.62)",
+          "oklch(26% 0.1543 27.62)",
+          "oklch(38% 0.1543 27.62)",
+          "oklch(49% 0.1543 27.62)",
+          "oklch(61% 0.1543 27.62)",
+          "oklch(72% 0.1543 27.62)",
+          "oklch(84% 0.1543 27.62)",
+          "oklch(95% 0.1543 27.62)"
+        ]
+      },
+      "error-bg": {
+        "role": "semantic",
+        "displayName": "Error Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0146 33.07)",
+          "oklch(26% 0.0146 33.07)",
+          "oklch(38% 0.0146 33.07)",
+          "oklch(49% 0.0146 33.07)",
+          "oklch(61% 0.0146 33.07)",
+          "oklch(72% 0.0146 33.07)",
+          "oklch(84% 0.0146 33.07)",
+          "oklch(95% 0.0146 33.07)"
+        ]
+      },
+      "dark-accent": {
+        "role": "primary",
+        "displayName": "Pale Forest",
+        "tonalRamp": [
+          "oklch(15% 0.0687 156.49)",
+          "oklch(26% 0.0687 156.49)",
+          "oklch(38% 0.0687 156.49)",
+          "oklch(49% 0.0687 156.49)",
+          "oklch(61% 0.0687 156.49)",
+          "oklch(72% 0.0687 156.49)",
+          "oklch(84% 0.0687 156.49)",
+          "oklch(95% 0.0687 156.49)"
+        ]
+      },
+      "dark-canvas": {
+        "role": "neutral",
+        "displayName": "Dark Canvas",
+        "tonalRamp": [
+          "oklch(15% 0.0129 160.14)",
+          "oklch(26% 0.0129 160.14)",
+          "oklch(38% 0.0129 160.14)",
+          "oklch(49% 0.0129 160.14)",
+          "oklch(61% 0.0129 160.14)",
+          "oklch(72% 0.0129 160.14)",
+          "oklch(84% 0.0129 160.14)",
+          "oklch(95% 0.0129 160.14)"
+        ]
+      },
+      "dark-surface": {
+        "role": "neutral",
+        "displayName": "Dark Working Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0168 155.93)",
+          "oklch(26% 0.0168 155.93)",
+          "oklch(38% 0.0168 155.93)",
+          "oklch(49% 0.0168 155.93)",
+          "oklch(61% 0.0168 155.93)",
+          "oklch(72% 0.0168 155.93)",
+          "oklch(84% 0.0168 155.93)",
+          "oklch(95% 0.0168 155.93)"
+        ]
+      },
+      "dark-ink": {
+        "role": "neutral",
+        "displayName": "Dark Ink",
+        "tonalRamp": [
+          "oklch(15% 0.0107 136.56)",
+          "oklch(26% 0.0107 136.56)",
+          "oklch(38% 0.0107 136.56)",
+          "oklch(49% 0.0107 136.56)",
+          "oklch(61% 0.0107 136.56)",
+          "oklch(72% 0.0107 136.56)",
+          "oklch(84% 0.0107 136.56)",
+          "oklch(95% 0.0107 136.56)"
+        ]
+      },
+      "dark-muted": {
+        "role": "neutral",
+        "displayName": "Dark Muted Leaf",
+        "tonalRamp": [
+          "oklch(15% 0.0243 143.33)",
+          "oklch(26% 0.0243 143.33)",
+          "oklch(38% 0.0243 143.33)",
+          "oklch(49% 0.0243 143.33)",
+          "oklch(61% 0.0243 143.33)",
+          "oklch(72% 0.0243 143.33)",
+          "oklch(84% 0.0243 143.33)",
+          "oklch(95% 0.0243 143.33)"
+        ]
+      },
+      "dark-line": {
+        "role": "neutral",
+        "displayName": "Dark Separator",
+        "tonalRamp": [
+          "oklch(15% 0.0205 150.60)",
+          "oklch(26% 0.0205 150.60)",
+          "oklch(38% 0.0205 150.60)",
+          "oklch(49% 0.0205 150.60)",
+          "oklch(61% 0.0205 150.60)",
+          "oklch(72% 0.0205 150.60)",
+          "oklch(84% 0.0205 150.60)",
+          "oklch(95% 0.0205 150.60)"
+        ]
+      },
+      "dark-control-line": {
+        "role": "neutral",
+        "displayName": "Dark Control Boundary",
+        "tonalRamp": [
+          "oklch(15% 0.0246 151.43)",
+          "oklch(26% 0.0246 151.43)",
+          "oklch(38% 0.0246 151.43)",
+          "oklch(49% 0.0246 151.43)",
+          "oklch(61% 0.0246 151.43)",
+          "oklch(72% 0.0246 151.43)",
+          "oklch(84% 0.0246 151.43)",
+          "oklch(95% 0.0246 151.43)"
+        ]
+      },
+      "dark-soft": {
+        "role": "neutral",
+        "displayName": "Dark Green Wash",
+        "tonalRamp": [
+          "oklch(15% 0.0314 155.19)",
+          "oklch(26% 0.0314 155.19)",
+          "oklch(38% 0.0314 155.19)",
+          "oklch(49% 0.0314 155.19)",
+          "oklch(61% 0.0314 155.19)",
+          "oklch(72% 0.0314 155.19)",
+          "oklch(84% 0.0314 155.19)",
+          "oklch(95% 0.0314 155.19)"
+        ]
+      },
+      "dark-danger": {
+        "role": "semantic",
+        "displayName": "Dark Error Ink",
+        "tonalRamp": [
+          "oklch(15% 0.0917 30.72)",
+          "oklch(26% 0.0917 30.72)",
+          "oklch(38% 0.0917 30.72)",
+          "oklch(49% 0.0917 30.72)",
+          "oklch(61% 0.0917 30.72)",
+          "oklch(72% 0.0917 30.72)",
+          "oklch(84% 0.0917 30.72)",
+          "oklch(95% 0.0917 30.72)"
+        ]
+      },
+      "dark-error-bg": {
+        "role": "semantic",
+        "displayName": "Dark Error Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0368 29.73)",
+          "oklch(26% 0.0368 29.73)",
+          "oklch(38% 0.0368 29.73)",
+          "oklch(49% 0.0368 29.73)",
+          "oklch(61% 0.0368 29.73)",
+          "oklch(72% 0.0368 29.73)",
+          "oklch(84% 0.0368 29.73)",
+          "oklch(95% 0.0368 29.73)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Workspace Heading",
+        "purpose": "Operational workspace headings; 24px on mobile."
+      },
+      "title": {
+        "displayName": "Section Heading",
+        "purpose": "Content group headings."
+      },
+      "title-small": {
+        "displayName": "Small Heading",
+        "purpose": "Smaller content groups."
+      },
+      "body": {
+        "displayName": "Interface Body",
+        "purpose": "Default operational copy."
+      },
+      "label": {
+        "displayName": "Field Label",
+        "purpose": "Visible field names."
+      },
+      "script": {
+        "displayName": "Script Editor",
+        "purpose": "The primary writing field; 14px on mobile."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "stage-confirm",
+        "value": "140ms ease-out; transform: scale(0.9) to scale(1)",
+        "purpose": "Selected stage-number confirmation; enabled only with prefers-reduced-motion: no-preference."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact-desktop",
+        "value": "1160px"
+      },
+      {
+        "name": "stacked-output",
+        "value": "960px"
+      },
+      {
+        "name": "mobile",
+        "value": "600px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Confirm the main action in a working area.",
+      "html": "<button class=\"ds-button ds-primary\">Gerar vídeo</button>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;padding:7px 13px;border:1px solid var(--line,#d8ded6);border-radius:5px;background:var(--surface,#fff);color:var(--ink,#252a25);font:550 14px/1.5 ui-sans-serif,system-ui,sans-serif;cursor:pointer;text-decoration:none}.ds-button:hover{background:var(--soft,#edf4ee);border-color:var(--accent,#265c42)}.ds-button:focus-visible{outline:3px solid var(--accent,#265c42);outline-offset:3px}.ds-button:disabled{opacity:.55;cursor:not-allowed}.ds-primary{background:var(--accent,#265c42);border-color:var(--accent,#265c42);color:var(--surface,#fff)}.ds-primary:hover{background:var(--accent,#265c42);filter:brightness(.92)}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A labeled operational action.",
+      "html": "<button class=\"ds-button\">Gerar roteiro</button>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;padding:7px 13px;border:1px solid var(--line,#d8ded6);border-radius:5px;background:var(--surface,#fff);color:var(--ink,#252a25);font:550 14px/1.5 ui-sans-serif,system-ui,sans-serif;cursor:pointer;text-decoration:none}.ds-button:hover{background:var(--soft,#edf4ee);border-color:var(--accent,#265c42)}.ds-button:focus-visible{outline:3px solid var(--accent,#265c42);outline-offset:3px}.ds-button:disabled{opacity:.55;cursor:not-allowed}"
+    },
+    {
+      "name": "Quiet Button",
+      "kind": "button",
+      "refersTo": "button-quiet",
+      "description": "A supporting action with reduced visual emphasis.",
+      "html": "<button class=\"ds-button ds-quiet\">Atualizar</button>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;padding:7px 13px;border:1px solid var(--line,#d8ded6);border-radius:5px;background:var(--surface,#fff);color:var(--ink,#252a25);font:550 14px/1.5 ui-sans-serif,system-ui,sans-serif;cursor:pointer;text-decoration:none}.ds-button:hover{background:var(--soft,#edf4ee);border-color:var(--accent,#265c42)}.ds-button:focus-visible{outline:3px solid var(--accent,#265c42);outline-offset:3px}.ds-button:disabled{opacity:.55;cursor:not-allowed}.ds-quiet{background:transparent;border-color:transparent;padding:6px 9px;color:var(--muted,#5b635c)}.ds-quiet:hover{color:var(--ink,#252a25)}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A labeled native field with a distinct control boundary.",
+      "html": "<label class=\"ds-field\">Tema do vídeo<input class=\"ds-input\" placeholder=\"Sobre o que é este vídeo?\"></label>",
+      "css": ".ds-field{display:flex;flex-direction:column;gap:7px;margin-bottom:18px;color:var(--ink,#252a25);font:600 12px/1.5 ui-sans-serif,system-ui,sans-serif}.ds-input{width:100%;min-width:0;padding:9px 11px;border:1px solid var(--control-line,#858e85);border-radius:4px;background:var(--surface,#fff);color:var(--ink,#252a25);font:400 14px/1.5 ui-sans-serif,system-ui,sans-serif;caret-color:var(--accent,#265c42)}.ds-input::placeholder{color:var(--muted,#5b635c);opacity:1}.ds-input:hover{border-color:var(--muted,#5b635c)}.ds-input:focus-visible{outline:3px solid var(--accent,#265c42);outline-offset:3px}.ds-input:disabled{opacity:.55;cursor:not-allowed}"
+    },
+    {
+      "name": "App Navigation",
+      "kind": "nav",
+      "refersTo": "navigation-current",
+      "description": "Text navigation with a quiet selected surface.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Navegação principal\"><button class=\"ds-button ds-current\" aria-current=\"page\">Editor</button><button class=\"ds-button\">Histórico</button><button class=\"ds-button\">Configurações</button></nav>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;padding:7px 13px;border:1px solid var(--line,#d8ded6);border-radius:5px;background:var(--surface,#fff);color:var(--ink,#252a25);font:550 14px/1.5 ui-sans-serif,system-ui,sans-serif;cursor:pointer;text-decoration:none}.ds-button:hover{background:var(--soft,#edf4ee);border-color:var(--accent,#265c42)}.ds-button:focus-visible{outline:3px solid var(--accent,#265c42);outline-offset:3px}.ds-button:disabled{opacity:.55;cursor:not-allowed}.ds-nav{display:flex;flex-wrap:wrap;gap:5px}.ds-nav .ds-button{background:transparent;border-color:transparent;color:var(--muted,#5b635c)}.ds-nav .ds-current{background:var(--soft,#edf4ee);color:var(--accent,#265c42)}"
+    },
+    {
+      "name": "Stage Navigation",
+      "kind": "nav",
+      "description": "Numbered production steps with selected state.",
+      "html": "<nav class=\"ds-stages\" aria-label=\"Etapas de produção\"><button class=\"ds-button ds-stage-current\" aria-current=\"step\"><span class=\"ds-step\">1</span>Roteiro</button><button class=\"ds-button\"><span class=\"ds-step\">2</span>Imagens</button></nav>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;padding:7px 13px;border:1px solid var(--line,#d8ded6);border-radius:5px;background:var(--surface,#fff);color:var(--ink,#252a25);font:550 14px/1.5 ui-sans-serif,system-ui,sans-serif;cursor:pointer;text-decoration:none}.ds-button:hover{background:var(--soft,#edf4ee);border-color:var(--accent,#265c42)}.ds-button:focus-visible{outline:3px solid var(--accent,#265c42);outline-offset:3px}.ds-button:disabled{opacity:.55;cursor:not-allowed}.ds-stages{display:flex;flex-direction:column;gap:7px;padding:14px;background:var(--canvas,#f4f4ee)}.ds-stages .ds-button{justify-content:flex-start;background:transparent;border-color:transparent;font-weight:500;gap:12px;padding:10px 12px}.ds-step{font-size:11px;font-variant-numeric:tabular-nums;display:grid;place-items:center;border:1px solid var(--line,#d8ded6);width:23px;height:23px;border-radius:50%;color:var(--muted,#5b635c)}.ds-stages .ds-stage-current{background:var(--surface,#fff);color:var(--accent,#265c42)}.ds-stage-current .ds-step{background:var(--accent,#265c42);border-color:var(--accent,#265c42);color:var(--surface,#fff)}"
+    },
+    {
+      "name": "Status Label",
+      "kind": "chip",
+      "refersTo": "status",
+      "description": "A text status, with a semantic failed variant.",
+      "html": "<span class=\"ds-status\">Gerando</span> <span class=\"ds-status ds-failed\">Falhou</span>",
+      "css": ".ds-status{display:inline-block;font:400 11px/1.5 ui-sans-serif,system-ui,sans-serif;padding:3px 7px;background:var(--soft,#edf4ee);color:var(--accent,#265c42);border-radius:3px;white-space:nowrap}.ds-failed{background:var(--error-bg,#fff2ef);color:var(--danger,#a12c26)}"
+    },
+    {
+      "name": "Working Surface",
+      "kind": "card",
+      "refersTo": "working-surface",
+      "description": "A flat panel for grouped configuration.",
+      "html": "<section class=\"ds-surface\"><h2 class=\"ds-title\">Geração de texto</h2><p class=\"ds-copy\">Provedores e preferências ficam neste servidor.</p></section>",
+      "css": ".ds-surface{background:var(--surface,#fff);color:var(--ink,#252a25);padding:25px 30px;border-radius:4px;font:400 14px/1.5 ui-sans-serif,system-ui,sans-serif}.ds-title{font-size:18px;line-height:1.3;letter-spacing:-.015em;font-weight:650;margin:0 0 14px}.ds-copy{margin:10px 0;color:var(--muted,#5b635c);max-width:70ch}"
+    },
+    {
+      "name": "Output Placeholder",
+      "kind": "custom",
+      "description": "An honest empty preview with no fabricated result.",
+      "html": "<div class=\"ds-preview\"><span>Seu vídeo aparece aqui</span></div>",
+      "css": ".ds-preview{aspect-ratio:9/12;border:1px dashed var(--line,#d8ded6);display:grid;place-items:center;padding:25px;text-align:center;color:var(--muted,#5b635c);font:400 12px/1.5 ui-sans-serif,system-ui,sans-serif;border-radius:4px;background:var(--surface,#fff)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Editing Workbench",
+    "overview": "MoneyPrinterTurbo uses a calm, compact visual language for sustained production work. Warm neutral surroundings separate the white working surfaces from the controls and output. A restrained forest-green accent identifies actions, selection and progress.\n\nThe system favors native browser controls, system UI typography and flat surfaces because it runs locally on PCs and Raspberry Pi installations. These choices are intentional. The product name and small geometric SVG brand mark remain visible; content and media are the working material.",
+    "keyCharacteristics": [
+      "Warm neutral canvas with clear working surfaces.",
+      "A single green accent for actions and selected state.",
+      "Compact, labeled native controls and system UI typography.",
+      "Flat depth, light separators and restrained corners.",
+      "Equivalent hierarchy in light, dark and system themes."
+    ],
+    "rules": [
+      {
+        "name": "The Control Boundary Rule",
+        "body": "Field outlines use the control-boundary color; layout dividers use the quieter separator color.",
+        "section": "colors"
+      },
+      {
+        "name": "The Local Type Rule",
+        "body": "Use the system stack and the existing compact hierarchy for operational screens.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Workbench Rule",
+        "body": "Establish grouping with surface tone, spacing and separators.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep visible field labels, text actions and the shared keyboard focus outline.",
+      "Do use the full semantic palette when adding light and dark states.",
+      "Do distinguish control boundaries from quieter structural separators.",
+      "Do keep native controls and players for operational tasks.",
+      "Do preserve responsive reading order and keep mobile actions in document flow.",
+      "Do use flat working surfaces and section rules for dense configuration."
+    ],
+    "donts": [
+      "Don't add a downloaded display font to operational screens without a new approved direction.",
+      "Don't replace labeled actions or the geometric brand mark with decorative glyph icons.",
+      "Don't use a card or shadow around every field.",
+      "Don't use status color as the only status signal.",
+      "Don't turn the studio's three-column composition into a universal layout requirement."
+    ]
+  }
+}

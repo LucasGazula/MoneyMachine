@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -287,4 +288,5 @@ app.mount("/tasks", StaticFiles(directory=task_dir, html=True), name="")
 public_dir = utils.public_dir()
 studio_dir = os.path.join(public_dir, "studio")
 frontend_dir = studio_dir if os.path.isfile(os.path.join(studio_dir, "index.html")) else public_dir
-app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="studio")
+app.mount("/", GZipMiddleware(StaticFiles(directory=frontend_dir, html=True),
+                             minimum_size=500, compresslevel=5), name="studio")

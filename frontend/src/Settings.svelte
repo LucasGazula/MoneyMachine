@@ -17,6 +17,8 @@
   let busy = true;
   let modelOptions: string[] = [];
   const secret = (key: string) => /(api_keys?|api_token|access_key|secret_key|speech_key|password)$/.test(key);
+  const privateField = (section: string, key: string) => secret(key) || Object.hasOwn(configured[section] || {}, key);
+  $: llmSettingKeys = new Set(providers.flatMap(p => ['api_key', 'base_url', 'model_name', ...p.extra_fields.map((f: Data) => f.config_suffix)].map(suffix => `${p.provider_id}_${suffix}`)));
   const human = (key: string) => key.replaceAll('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
   async function load() {
     busy = true;
@@ -42,7 +44,7 @@
       const changes: Data = structuredClone(pending);
       for (const [section, values] of Object.entries(sections)) {
         for (const [key, value] of Object.entries(values as Data)) {
-          if (!secret(key) && JSON.stringify(value) !== JSON.stringify(original[section]?.[key])) {
+          if (!privateField(section,key) && JSON.stringify(value) !== JSON.stringify(original[section]?.[key])) {
             (changes[section] ??= {})[key] = value;
           }
         }
@@ -64,11 +66,11 @@
   async function importKeys(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0]; if (!file) return;
-    try { if (file.size > 1000000) throw new Error(t('File is too large.')); await api('/keys/import', JSON.parse(await file.text())); await load(); notice = t('Credentials imported.'); }
+    try { if (file.size > 1000000) throw new Error(t('File is too large.')); await api('/keys/import', JSON.parse(await file.text())); await load(); onsaved(); notice = t('Credentials imported.'); }
     catch (e) { error = String(e); } finally { input.value = ''; }
   }
   $: spec = providers.find(p => p.provider_id === provider);
-  $: shown = Object.entries(sections[selected] || {}).filter(([key]) => key.toLowerCase().includes(search.toLowerCase()) && (selected !== 'app' || !providers.some(p => key.startsWith(p.provider_id + '_'))));
+  $: shown = Object.entries(sections[selected] || {}).filter(([key]) => key.toLowerCase().includes(search.toLowerCase()) && (selected !== 'app' || !llmSettingKeys.has(key)));
 </script>
 
 <section class="settings-workspace">
@@ -93,7 +95,7 @@
           {/if}
           {#each ['api_key', 'base_url', 'model_name', ...(spec?.extra_fields || []).map((f: Data) => f.config_suffix)] as suffix}
             {@const key = `${provider}_${suffix}`}
-            {@const isSecret = secret(key) || spec?.extra_fields?.some((f: Data) => f.config_suffix === suffix && f.secret)}
+            {@const isSecret = privateField('app',key) || spec?.extra_fields?.some((f: Data) => f.config_suffix === suffix && f.secret)}
             {#if !((suffix === 'api_key' && spec?.show_api_key === false) || (suffix === 'base_url' && spec?.show_base_url === false))}
               <div on:input={() => { if (isSecret) change('app', key, sections.app[key]); }} role="group">
                 <Field label={`${spec?.default_label}: ${human(suffix)}`} bind:value={sections.app[key]} type={isSecret ? 'password' : 'text'} placeholder={configured.app?.[key] ? t('Configured — enter only to replace') : ''}/>
@@ -108,13 +110,13 @@
         <Field label={t('Find Setting')} bind:value={search} placeholder={t('Search by name')}/>
         <div class="form-grid">
           {#each shown as [key, value]}
-            <div role="group" on:input={() => { if (secret(key)) change(selected, key, sections[selected][key]); }}>
+            <div role="group" on:input={() => { if (privateField(selected,key)) change(selected, key, sections[selected][key]); }}>
               {#if Array.isArray(value)}
-                <label class="field">{human(key)}<textarea rows="3" placeholder={configured[selected]?.[key] ? t('Configured — enter only to replace') : t('One value per line')} value={(value as string[]).join('\n')} on:input={(e) => { sections[selected][key] = (e.currentTarget as HTMLTextAreaElement).value.split('\n').map(v => v.trim()).filter(Boolean); if (secret(key)) change(selected, key, sections[selected][key]); }}></textarea></label>
+                <label class="field">{human(key)}<textarea rows="3" placeholder={configured[selected]?.[key] ? t('Configured — enter only to replace') : t('One value per line')} value={(value as string[]).join('\n')} on:input={(e) => { sections[selected][key] = (e.currentTarget as HTMLTextAreaElement).value.split('\n').map(v => v.trim()).filter(Boolean); if (privateField(selected,key)) change(selected, key, sections[selected][key]); }}></textarea></label>
               {:else}
-                <Field label={human(key)} bind:value={sections[selected][key]} type={secret(key) ? 'password' : typeof value === 'boolean' ? 'checkbox' : typeof value === 'number' ? 'number' : 'text'} placeholder={configured[selected]?.[key] ? t('Configured — enter only to replace') : ''}/>
+                <Field label={human(key)} bind:value={sections[selected][key]} type={privateField(selected,key) ? 'password' : typeof value === 'boolean' ? 'checkbox' : typeof value === 'number' ? 'number' : 'text'} placeholder={configured[selected]?.[key] ? t('Configured — enter only to replace') : ''}/>
               {/if}
-              {#if secret(key) && configured[selected]?.[key]}<button class="quiet" on:click={() => { const empty = Array.isArray(value) ? [] : ''; sections[selected][key] = empty; change(selected, key, empty); }}>{t('Clear Credential')}</button>{/if}
+              {#if privateField(selected,key) && configured[selected]?.[key]}<button class="quiet" on:click={() => { const empty = Array.isArray(value) ? [] : ''; sections[selected][key] = empty; change(selected, key, empty); }}>{t('Clear Credential')}</button>{/if}
             </div>
           {/each}
         </div>

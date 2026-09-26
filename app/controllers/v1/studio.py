@@ -21,7 +21,12 @@ from pydantic import BaseModel, Field
 
 from app.config import config
 from app.controllers import base
-from app.models.schema import MaterialInfo, VideoParams
+from app.models.schema import (
+    MaterialInfo,
+    VideoParams,
+    VideoScriptRequest,
+    VideoTermsRequest,
+)
 from app.services import bgm, material_upload, studio, webui_task
 from app.utils import file_security, utils
 
@@ -50,15 +55,25 @@ class StudioRoute(APIRoute):
 def verify_browser(request: Request):
     key = config.app.get("api_key", "")
     cookie = _sessions.get(request.cookies.get("mpt_session", ""))
-    if (isinstance(key, str) and cookie and cookie[0] > time.monotonic()
-            and hmac.compare_digest(cookie[1], hashlib.sha256(key.encode()).hexdigest())):
+    if (
+        isinstance(key, str)
+        and cookie
+        and cookie[0] > time.monotonic()
+        and hmac.compare_digest(cookie[1], hashlib.sha256(key.encode()).hexdigest())
+    ):
         return
     base.verify_token(request)
 
 
-auth_router = APIRouter(prefix="/api/v1/studio", tags=["Studio"], route_class=StudioRoute)
-router = APIRouter(prefix="/api/v1/studio", tags=["Studio"],
-                   dependencies=[Depends(verify_browser)], route_class=StudioRoute)
+auth_router = APIRouter(
+    prefix="/api/v1/studio", tags=["Studio"], route_class=StudioRoute
+)
+router = APIRouter(
+    prefix="/api/v1/studio",
+    tags=["Studio"],
+    dependencies=[Depends(verify_browser)],
+    route_class=StudioRoute,
+)
 
 
 class Login(BaseModel):
@@ -68,7 +83,9 @@ class Login(BaseModel):
 @auth_router.post("/session")
 def login(body: Login, request: Request):
     key = config.app.get("api_key", "")
-    if not isinstance(key, str) or (key and not hmac.compare_digest(body.key.encode(), key.encode())):
+    if not isinstance(key, str) or (
+        key and not hmac.compare_digest(body.key.encode(), key.encode())
+    ):
         raise HTTPException(401, "Invalid API key")
     token = secrets.token_urlsafe(32)
     now = time.monotonic()
@@ -79,9 +96,15 @@ def login(body: Login, request: Request):
         _sessions.pop(next(iter(_sessions)))
     _sessions[token] = (now + 28800, hashlib.sha256(key.encode()).hexdigest())
     response = JSONResponse({"authenticated": True})
-    response.set_cookie("mpt_session", token, max_age=28800, httponly=True,
-                        samesite="strict", secure=request.url.scheme == "https",
-                        path="/api/v1/studio")
+    response.set_cookie(
+        "mpt_session",
+        token,
+        max_age=28800,
+        httponly=True,
+        samesite="strict",
+        secure=request.url.scheme == "https",
+        path="/api/v1/studio",
+    )
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -126,25 +149,57 @@ def voices(provider: str = "azure-tts-v1"):
     return {"voices": studio.voices(provider)}
 
 
+@router.post("/scripts")
+def script(body: VideoScriptRequest, request: Request):
+    from app.controllers.v1.llm import generate_video_script
+
+    return generate_video_script(request, body)
+
+
+@router.post("/terms")
+def terms(body: VideoTermsRequest, request: Request):
+    from app.controllers.v1.llm import generate_video_terms
+
+    return generate_video_terms(request, body)
+
+
 @router.get("/models")
 def models(provider: str):
     import requests
 
-    spec = next((p for p in studio.LLM_PROVIDER_REGISTRY if p.provider_id == provider), None)
+    spec = next(
+        (p for p in studio.LLM_PROVIDER_REGISTRY if p.provider_id == provider), None
+    )
     if not spec:
         raise ValueError("unknown model provider")
     settings = config.snapshot_config_with_pending(config.app)
-    endpoint = spec.resolve_base_url(settings.get(spec.config_key("base_url"))).rstrip("/")
+    endpoint = spec.resolve_base_url(settings.get(spec.config_key("base_url"))).rstrip(
+        "/"
+    )
     if not endpoint:
-        return {"models": [spec.resolve_model_name(settings.get(spec.config_key("model_name")))]}
+        return {
+            "models": [
+                spec.resolve_model_name(settings.get(spec.config_key("model_name")))
+            ]
+        }
     key = settings.get(spec.config_key("api_key"), "")
     try:
-        response = requests.get(endpoint + "/models", headers={"Authorization": f"Bearer {key}"}, timeout=15)
+        response = requests.get(
+            endpoint + "/models", headers={"Authorization": f"Bearer {key}"}, timeout=15
+        )
         response.raise_for_status()
         payload = response.json()
-        return {"models": sorted(str(m["id"]) for m in payload.get("data", []) if isinstance(m, dict) and m.get("id"))}
+        return {
+            "models": sorted(
+                str(m["id"])
+                for m in payload.get("data", [])
+                if isinstance(m, dict) and m.get("id")
+            )
+        }
     except (requests.RequestException, ValueError):
-        raise ValueError("Cannot discover models; check the provider endpoint and credentials, or enter a model manually") from None
+        raise ValueError(
+            "Cannot discover models; check the provider endpoint and credentials, or enter a model manually"
+        ) from None
 
 
 def _bounded_reference(identifier):
@@ -164,24 +219,37 @@ def upload(kind: str, file: UploadFile = File(...)):
         name = bgm.save_bgm_upload(file.filename or "", file.file)
         if kind == "narration":
             source = Path(bgm.uploaded_bgm_dir()) / name
-            destination = Path(utils.storage_dir("narration_uploads", create=True)) / name
+            destination = (
+                Path(utils.storage_dir("narration_uploads", create=True)) / name
+            )
             shutil.move(str(source), str(destination))
     elif kind in {"reference", "prompt"}:
         from app.services import voice
 
         data = file.file.read(voice.VOXCPM_REFERENCE_AUDIO_MAX_UPLOAD_BYTES + 1)
-        converted = voice.prepare_voxcpm_reference_audio(data, suffix=Path(file.filename or "").suffix)
+        converted = voice.prepare_voxcpm_reference_audio(
+            data, suffix=Path(file.filename or "").suffix
+        )
         name = str(uuid4())
         studio._remember(_references, name, {"bytes": converted})
     else:
         raise ValueError("unknown upload type")
-    return {"id": name, "name": Path(file.filename or name).name, "kind": kind,
-            "url": f"/api/v1/studio/uploads/{kind}/{name}" if kind not in {"reference", "prompt"} else None}
+    return {
+        "id": name,
+        "name": Path(file.filename or name).name,
+        "kind": kind,
+        "url": f"/api/v1/studio/uploads/{kind}/{name}"
+        if kind not in {"reference", "prompt"}
+        else None,
+    }
 
 
 def _upload_file(kind, name):
-    roots = {"material": material_upload.uploaded_material_dir(), "music": bgm.uploaded_bgm_dir(),
-             "narration": utils.storage_dir("narration_uploads", create=True)}
+    roots = {
+        "material": material_upload.uploaded_material_dir(),
+        "music": bgm.uploaded_bgm_dir(),
+        "narration": utils.storage_dir("narration_uploads", create=True),
+    }
     if kind not in roots or Path(name).name != name or "\\" in name:
         raise ValueError("invalid upload identifier")
     return file_security.resolve_path_within_directory(roots[kind], name)
@@ -219,14 +287,43 @@ class Generation(BaseModel):
     quote_id: str = ""
     quote_inputs: dict = Field(default_factory=dict)
     charge_confirmed: bool = False
+    paid_source_confirmed: bool = False
+
+
+def check_speech_runtime(params, *, uploaded_narration=False):
+    from importlib.util import find_spec
+
+    modules = []
+    if params.voice_name and "V2" in params.voice_name and not uploaded_narration:
+        modules.append(("azure.cognitiveservices.speech", "azure-speech"))
+    if (
+        uploaded_narration
+        and params.subtitle_enabled
+        and config.app.get("subtitle_provider", "edge") == "whisper"
+    ):
+        modules.append(("faster_whisper", "whisper"))
+    for module, extra in modules:
+        try:
+            available = find_spec(module) is not None
+        except ModuleNotFoundError:
+            available = False
+        if not available:
+            raise ValueError(f"Install speech support with: uv sync --extra {extra}")
 
 
 def validate_params(params):
-    for name, low, high in (("video_count", 1, 100), ("video_clip_speed", .5, 2),
-                            ("voice_rate", .25, 4), ("voice_volume", 0, 10),
-                            ("bgm_volume", 0, 10), ("font_size", 1, 500),
-                            ("stroke_width", 0, 50), ("n_threads", 1, 64),
-                            ("custom_position", 0, 100), ("video_clip_duration", 1, 600)):
+    for name, low, high in (
+        ("video_count", 1, 100),
+        ("video_clip_speed", 0.5, 2),
+        ("voice_rate", 0.25, 4),
+        ("voice_volume", 0, 10),
+        ("bgm_volume", 0, 10),
+        ("font_size", 1, 500),
+        ("stroke_width", 0, 50),
+        ("n_threads", 1, 64),
+        ("custom_position", 0, 100),
+        ("video_clip_duration", 1, 600),
+    ):
         value = getattr(params, name)
         if value is None or not low <= value <= high:
             raise ValueError(f"{name} must be between {low} and {high}")
@@ -237,15 +334,23 @@ def validate_params(params):
     if not params.video_subject.strip() and not params.video_script.strip():
         raise ValueError("provide a subject or a script")
     if params.subtitle_enabled:
-        file_security.resolve_path_within_directory(utils.font_dir(), params.font_name or "")
+        file_security.resolve_path_within_directory(
+            utils.font_dir(), params.font_name or ""
+        )
     if params.bgm_type in {"custom", "preset"}:
-        resolver = bgm.resolve_builtin_bgm_file if params.bgm_type == "preset" else bgm.resolve_bgm_file
+        resolver = (
+            bgm.resolve_builtin_bgm_file
+            if params.bgm_type == "preset"
+            else bgm.resolve_bgm_file
+        )
         params.bgm_file = resolver(params.bgm_file)
     if params.video_source == "local":
         if not params.video_materials:
             raise ValueError("upload at least one local video or image")
-        params.video_materials = [MaterialInfo(provider="local", url=_upload_file("material", m.url))
-                                  for m in params.video_materials]
+        params.video_materials = [
+            MaterialInfo(provider="local", url=_upload_file("material", m.url))
+            for m in params.video_materials
+        ]
     elif params.video_materials:
         raise ValueError("uploaded materials can only be used with the local source")
     if params.custom_audio_file:
@@ -256,26 +361,49 @@ def validate_params(params):
 @router.post("/generate", status_code=202)
 def generate(body: Generation):
     params = validate_params(body.params.model_copy(deep=True))
+    check_speech_runtime(params, uploaded_narration=bool(body.narration_id))
+    if (
+        params.video_source
+        in {"wavespeed", "volcengine_seedance", "ofox", "metaso_minimax", "muapi"}
+        and not body.paid_source_confirmed
+    ):
+        raise ValueError(
+            "Confirm the selected provider's video-generation charges before submitting"
+        )
     reference = _bounded_reference(body.reference_id)
     prompt = _bounded_reference(body.prompt_id)
-    narration = _upload_file("narration", body.narration_id) if body.narration_id else None
+    narration = (
+        _upload_file("narration", body.narration_id) if body.narration_id else None
+    )
     confirmed = None
     if params.video_source == "loomloom":
-        if (body.quote_inputs.get("subject") != params.video_subject
-                or body.quote_inputs.get("aspect_ratio") != params.video_aspect):
+        if (
+            body.quote_inputs.get("subject") != params.video_subject
+            or body.quote_inputs.get("aspect_ratio") != params.video_aspect
+        ):
             raise ValueError("video parameters changed; request a new quote")
-        confirmed = studio.confirmed_video(body.quote_id, body.quote_inputs, body.charge_confirmed)
+        confirmed = studio.confirmed_video(
+            body.quote_id, body.quote_inputs, body.charge_confirmed
+        )
     task_id = str(uuid4())
-    preview = studio.reusable_preview(body.preview_id, params, task_id, reference, prompt, body.prompt_text)
+    preview = studio.reusable_preview(
+        body.preview_id, params, task_id, reference, prompt, body.prompt_text
+    )
     if narration:
         folder = Path(utils.task_dir(task_id))
         destination = folder / ("uploaded-audio" + Path(narration).suffix)
         shutil.copyfile(narration, destination)
         params.custom_audio_file = str(destination)
-    webui_task.submit_generation(task_id, params,
-        capture_logs=not config.ui.get("hide_log", False), voice_preview=preview,
-        loomloom_video_request=confirmed, voxcpm_reference_audio=reference,
-        voxcpm_prompt_audio=prompt, voxcpm_prompt_text=body.prompt_text)
+    webui_task.submit_generation(
+        task_id,
+        params,
+        capture_logs=not config.ui.get("hide_log", False),
+        voice_preview=preview,
+        loomloom_video_request=confirmed,
+        voxcpm_reference_audio=reference,
+        voxcpm_prompt_audio=prompt,
+        voxcpm_prompt_text=body.prompt_text,
+    )
     return {"task_id": task_id}
 
 
@@ -286,18 +414,15 @@ class Preview(Generation):
 
 @router.post("/previews")
 def preview(body: Preview):
-    if body.params.voice_name and "V2" in body.params.voice_name:
-        from importlib.util import find_spec
-
-        try:
-            available = find_spec("azure.cognitiveservices.speech") is not None
-        except ModuleNotFoundError:
-            available = False
-        if not available:
-            raise ValueError("Install Azure Speech support with: uv sync --extra azure-speech")
-    return studio.preview(body.params, text=body.text, full=body.full,
+    check_speech_runtime(body.params)
+    return studio.preview(
+        body.params,
+        text=body.text,
+        full=body.full,
         reference_audio=_bounded_reference(body.reference_id),
-        prompt_audio=_bounded_reference(body.prompt_id), prompt_text=body.prompt_text)
+        prompt_audio=_bounded_reference(body.prompt_id),
+        prompt_text=body.prompt_text,
+    )
 
 
 @router.get("/previews/{identifier}")
@@ -328,7 +453,9 @@ def delete_task(task_id: str):
 def task_file(task_id: str, filename: str, download: bool = False):
     if Path(filename).name != filename or "\\" in filename:
         raise ValueError("invalid filename")
-    path = file_security.resolve_path_within_directory(str(studio.task_path(task_id)), filename)
+    path = file_security.resolve_path_within_directory(
+        str(studio.task_path(task_id)), filename
+    )
     return FileResponse(path, filename=filename if download else None)
 
 
@@ -338,16 +465,22 @@ def open_task(task_id: str, body: dict):
     if not target.is_dir():
         raise FileNotFoundError("task not found")
     if body.get("file"):
-        target = Path(file_security.resolve_path_within_directory(str(target), body["file"]))
+        target = Path(
+            file_security.resolve_path_within_directory(str(target), body["file"])
+        )
         if target.suffix.lower() != ".mp4":
             raise ValueError("only video artifacts can be opened")
     relative = os.path.relpath(target, utils.root_dir())
-    if os.getenv("HEADLESS", "").lower() in {"1", "true"} or (sys.platform.startswith("linux") and not os.getenv("DISPLAY")):
+    if os.getenv("HEADLESS", "").lower() in {"1", "true"} or (
+        sys.platform.startswith("linux") and not os.getenv("DISPLAY")
+    ):
         return {"opened": False, "path": relative}
     if sys.platform.startswith("win"):
         os.startfile(str(target))
     else:
-        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(target)])
+        subprocess.Popen(
+            ["open" if sys.platform == "darwin" else "xdg-open", str(target)]
+        )
     return {"opened": True, "path": relative}
 
 
@@ -358,7 +491,10 @@ def export_preset(params: VideoParams):
 
 @router.post("/presets/import")
 def import_preset(body: dict):
-    if body.get("schema") != "moneyprinterturbo.settings-preset" or body.get("version") != 1:
+    if (
+        body.get("schema") != "moneyprinterturbo.settings-preset"
+        or body.get("version") != 1
+    ):
         raise ValueError("unsupported preset format")
     return {"params": studio.preset(body.get("params", {}), importing=True)}
 
@@ -367,7 +503,9 @@ def import_preset(body: dict):
 def export_keys():
     response = JSONResponse(studio.key_backup())
     response.headers["Cache-Control"] = "no-store"
-    response.headers["Content-Disposition"] = 'attachment; filename="moneyprinterturbo-keys.json"'
+    response.headers["Content-Disposition"] = (
+        'attachment; filename="moneyprinterturbo-keys.json"'
+    )
     return response
 
 
@@ -378,9 +516,15 @@ def import_keys(body: dict):
     if not isinstance(body.get("keys"), dict):
         raise ValueError("key backup must contain named sections")
     current = studio.settings()["sections"]
-    changes = {name: {key: value for key, value in values.items() if value and key in current[name]}
-               for name, values in body.get("keys", {}).items()
-               if name in current and name != "ui" and isinstance(values, dict)}
+    changes = {
+        name: {
+            key: value
+            for key, value in values.items()
+            if value and key in current[name]
+        }
+        for name, values in body.get("keys", {}).items()
+        if name in current and name != "ui" and isinstance(values, dict)
+    }
     return studio.update_settings(changes)
 
 
@@ -402,7 +546,10 @@ def clean_cache(days: int | None = Query(None, ge=1)):
 def version():
     from app.services import version_checker
 
-    return {"version": studio.__version__, "update": version_checker.get_available_update(studio.__version__)}
+    return {
+        "version": studio.__version__,
+        "update": version_checker.get_available_update(studio.__version__),
+    }
 
 
 @router.get("/loomloom/capabilities")
@@ -410,7 +557,11 @@ def capabilities():
     from app.services import loomloom
 
     values = config.snapshot_config_with_pending(config.app)
-    return asdict(loomloom.LoomLoomVideoBackend(loomloom.video_settings_from_mapping(values)).resolve_video_capability())
+    return asdict(
+        loomloom.LoomLoomVideoBackend(
+            loomloom.video_settings_from_mapping(values)
+        ).resolve_video_capability()
+    )
 
 
 class QuoteRequest(BaseModel):
@@ -429,8 +580,12 @@ def quote(body: QuoteRequest):
 def execute_script(body: QuoteRequest):
     entry = studio.confirmed_quote(body.quote_id, "script", body.inputs, body.confirmed)
     try:
-        run = entry["backend"].execute(entry["batch"], client_request_id=entry["client_request_id"],
-                                       listing_version_id=entry["quote"].listing_version_id, confirm=True)
+        run = entry["backend"].execute(
+            entry["batch"],
+            client_request_id=entry["client_request_id"],
+            listing_version_id=entry["quote"].listing_version_id,
+            confirm=True,
+        )
     except Exception:
         # Keep the same idempotency key if the response was lost; never create another charge.
         entry["used"] = False

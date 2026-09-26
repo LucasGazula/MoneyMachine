@@ -51,3 +51,4 @@ htmlcov/
 /frontend/test-results/
 /frontend/playwright-report/
 /.impeccable/review/
+/.impeccable/hook.cache.json

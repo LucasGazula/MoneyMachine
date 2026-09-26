@@ -2,6 +2,8 @@
 
 This fork replaces the default Streamlit UI with a static Svelte/TypeScript application served by FastAPI. There is one Python server, no production Node process, and no Python reruns when editing a form or changing stages. The existing API and CLI remain available.
 
+Local measurements and their limits are recorded in [performance.md](performance.md). The desktop/mobile UI review informed the control-border contrast and mobile action-bar layout; the design contract is in [DESIGN.md](../DESIGN.md).
+
 ## Local setup (Linux, macOS, Windows)
 
 ```sh

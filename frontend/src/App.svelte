@@ -27,6 +27,7 @@
   let voiceError = '';
   let sampleText = '';
   let preview: Data | null = null;
+  let previewInputs = '';
   let narration: Data | null = null;
   let reference: Data | null = null;
   let prompt: Data | null = null;
@@ -45,6 +46,7 @@
   let version: Data | null = null;
   let capabilities: Data | null = null;
   let scenePrompts = '';
+  let sceneCount = 1;
   let scriptBackend = 'local';
   let modelId = '';
   let scriptCandidates: Data[] = [];
@@ -55,10 +57,55 @@
   let quoteKind = '';
   let quoteInputs: Data | null = null;
   let chargeConfirmed = false;
-  let scriptRunId = '';
+  let paidConfirmed = false;
+  let paidApprovedSignature = '';
+  let scriptRunId = sessionStorage.getItem('mpt-script-run') || '';
+  let scriptPolling = false;
   let timer: ReturnType<typeof setInterval>;
   const voiceCache = new Map<string, string[]>();
   const pt: Data = {
+    'Start with an idea. Shape the story before choosing the footage.': 'Comece por uma ideia. Acerte o roteiro antes de escolher a mídia.',
+    'Choose where your images come from and how they fill the screen.': 'Escolha de onde vem a mídia e como ela ocupa a tela.',
+    'Listen before rendering. Keep narration, music and cloning controls together.': 'Ouça antes de renderizar. Ajuste narração, música e clonagem de voz.',
+    'Make every line readable. Preview the style before rendering.': 'Deixe cada frase legível. Confira o estilo antes de renderizar.',
+    'What is this video about?': 'Qual é o tema deste vídeo?',
+    'Write your script, or generate a first draft from the subject.': 'Escreva o roteiro ou gere uma primeira versão a partir do tema.',
+    'Script Generation Backend': 'Geração de roteiro', 'Configured LLM': 'LLM configurado',
+    'Scene Count': 'Quantidade de cenas', 'Suggest Scenes': 'Sugerir cenas', 'Actual Narration': 'Narração medida',
+    'video(s)': 'vídeo(s)', 'Write a script to estimate narration length.': 'Escreva um roteiro para estimar a duração.',
+    'Find Voice': 'Buscar voz', 'Manual Voice ID': 'ID de voz manual',
+    'Enter a MiniMax voice ID, including a private or cloned voice.': 'Informe um ID MiniMax, incluindo voz privada ou clonada.',
+    'Separate terms with commas. Leave empty to generate them automatically.': 'Separe os termos por vírgulas. Deixe vazio para gerar automaticamente.',
+    'This source may create paid provider requests when you generate the video.': 'Esta fonte pode fazer chamadas pagas ao gerar o vídeo.',
+    'I authorize the selected provider to charge for this video generation.': 'Autorizo a cobrança deste provedor para gerar este vídeo.',
+    'Inputs changed. Request a new quote before confirming.': 'Os dados mudaram. Consulte o preço novamente antes de confirmar.',
+    'One scene per line. Maximum five scenes. Exact scene prompts are included in the quote.': 'Uma cena por linha, até cinco cenas. O preço consultado corresponde a estas descrições.',
+    'clips needed; shorter footage repeats.': 'clipes necessários; mídia mais curta será repetida.',
+    'Your story, clearly told.': 'Sua história, contada com clareza.',
+    'Layout preview only; final font rendering and animation are applied by the video engine.': 'Prévia de layout. A fonte e a animação finais são aplicadas pelo renderizador.',
+    'Preview requests use the selected provider. A matching full preview is reused during generation.': 'A prévia usa o provedor selecionado. A narração completa compatível será reutilizada na geração.',
+    'Use Whisper subtitles for uploaded narration; the model loads only when transcription is requested.': 'Use Whisper para legendar áudio enviado. O modelo só carrega quando a transcrição é solicitada.',
+    'Private reference audio expires after 30 minutes and is never stored in task history.': 'O áudio privado expira em 30 minutos e não é salvo no histórico.',
+    'Uploaded narration and private reference audio must be uploaded again.': 'Envie novamente a narração e os áudios de referência privados.',
+    'Settings will be saved after the active task.': 'As configurações serão salvas após a tarefa ativa.',
+    'Revisit a render, download its files or use its settings as a starting point.': 'Revise um vídeo, baixe os arquivos ou restaure as configurações para começar outro.',
+    'Your first video': 'Seu primeiro vídeo', 'Write a subject and generate or paste a script.': 'Escreva um tema e gere ou cole o roteiro.',
+    'Configure a stock or generation provider, or upload local images and videos.': 'Configure uma fonte de mídia ou envie imagens e vídeos locais.',
+    'Select a voice, upload narration or choose silent mode. Audition before rendering.': 'Escolha uma voz, envie uma narração ou selecione o modo sem voz. Ouça antes de renderizar.',
+    'Set your subtitle style and generate. Progress and files stay in the output panel.': 'Ajuste as legendas e gere o vídeo. O progresso e os arquivos ficam no painel de resultado.',
+    'Local deployment': 'Uso local', 'Inspect Cache': 'Consultar cache', 'files': 'arquivos', 'files removed': 'arquivos removidos',
+    'Leave empty to include all cached stock-video downloads.': 'Deixe vazio para incluir todos os vídeos em cache.',
+    'API Documentation': 'Documentação da API', 'Service Endpoint': 'Região do serviço', 'Configuration Sections': 'Seções de configuração',
+    'Main Navigation': 'Navegação principal', 'Production Stages': 'Etapas da produção', 'Skip to content': 'Ir para o conteúdo',
+    'Subtitle Provider Settings': 'Configurar provedor de legendas', 'Two-thirds down': 'A dois terços da tela',
+    'Full Narration': 'Narração completa', 'Sample': 'Amostra', 'Dismiss': 'Dispensar', 'Retry': 'Tentar novamente',
+    'Enter the API key configured on this server.': 'Informe a chave da API configurada neste servidor.',
+    'Cannot connect to the server': 'Não foi possível conectar ao servidor', 'File is too large.': 'O arquivo é grande demais.',
+    'Preset imported.': 'Preset importado.', 'Update available': 'Atualização disponível', 'You are up to date.': 'Você está na versão atual.',
+    'A quote is an estimate. Actual charges can differ, including when the estimate is zero.': 'O preço é uma estimativa. A cobrança real pode ser diferente, inclusive quando a estimativa é zero.',
+    'Paid script, speech, music and video services use your configured provider account. LoomLoom requires a separate quote and explicit confirmation. No provider is contacted simply by opening the editor.': 'Serviços pagos de roteiro, voz, música e vídeo usam a conta do provedor configurado. O LoomLoom exige preço consultado e confirmação explícita. Abrir o editor não faz chamadas aos provedores.',
+    'Whisper and video libraries load only when their operation is requested. For uploaded narration, select Whisper in the subtitle provider settings.': 'Whisper e bibliotecas de vídeo só carregam quando necessários. Para narração enviada, selecione Whisper nas configurações do provedor de legendas.',
+    'This interface is served by the same FastAPI process as the API. Node and Streamlit are not needed in production. On a headless Raspberry Pi, use the browser preview and downloads instead of opening a desktop player.': 'A interface e a API usam o mesmo processo FastAPI. Node e Streamlit não são necessários em produção. Em um Raspberry Pi sem desktop, use a prévia do navegador e os downloads.',
     'Studio': 'Estúdio', 'Editor': 'Editor', 'History': 'Histórico', 'Settings': 'Configurações', 'Help': 'Ajuda',
     'Script': 'Roteiro', 'Footage': 'Mídia', 'Sound': 'Áudio', 'Subtitles': 'Legendas', 'Output': 'Resultado',
     'Video Subject': 'Tema do vídeo', 'Video Script': 'Roteiro do vídeo', 'Generate Script': 'Gerar roteiro',
@@ -95,7 +142,6 @@
     'Use This Provider': 'Usar este provedor', 'Get API Key': 'Obter chave', 'Model Documentation': 'Documentação de modelos',
     'Configured — enter only to replace': 'Configurado — preencha só para substituir', 'Clear Credential': 'Apagar credencial',
     'One value per line': 'Um valor por linha', 'Settings saved.': 'Configurações salvas.', 'Credentials imported.': 'Credenciais importadas.',
-    'Settings will be saved after the active task.': 'As configurações serão salvas após a tarefa ativa.',
     'Your video appears here': 'Seu vídeo aparece aqui', 'From script to screen': 'Do roteiro à tela',
     'Choose your footage, voice and subtitles, then generate. You can follow progress here without leaving the editor.': 'Escolha mídia, voz e legendas e gere o vídeo. Acompanhe tudo aqui, sem sair do editor.',
     'You can keep editing while this task runs.': 'Você pode continuar editando enquanto a tarefa roda.',
@@ -151,11 +197,17 @@
   });
   $: document.documentElement.dataset.theme = theme;
   $: localStorage.setItem('mpt-theme', theme);
-  $: estimate = durationEstimate(params.video_script || '', params.voice_rate || 1);
+  $: narrationSignature = JSON.stringify([params.video_script, voiceProvider, params.voice_name, params.voice_rate, params.voice_volume, reference?.id, prompt?.id, promptText]);
+  $: actualNarration = preview?.full && narrationSignature === previewInputs ? preview.duration : null;
+  $: estimate = actualNarration ? [actualNarration,actualNarration] : durationEstimate(params.video_script || '', params.voice_rate || 1);
   $: scriptQuoteInput = { subject: params.video_subject, candidate_count: candidateCount, language: params.video_language || 'auto', duration_seconds: scriptDuration, style: scriptStyle };
   $: videoQuoteInput = {subject: params.video_subject, scene_prompts: scenePrompts.split('\n').map(v => v.trim()).filter(Boolean), model_id: modelId, aspect_ratio: params.video_aspect};
   $: quoteChanged = !!quote && JSON.stringify(quoteInputs) !== JSON.stringify(quoteKind === 'script' ? scriptQuoteInput : videoQuoteInput);
   $: if (quoteChanged) chargeConfirmed = false;
+  $: paidSource = ['wavespeed','volcengine_seedance','ofox','metaso_minimax','muapi'].includes(params.video_source);
+  $: paidSignature = JSON.stringify([params.video_source,params.video_subject,params.video_script,params.video_terms,params.video_count,params.video_clip_duration,params.video_aspect]);
+  $: if (paidSignature !== paidApprovedSignature) paidConfirmed = false;
+  $: generationBlocked = !!busy || (!params.video_subject?.trim() && !params.video_script?.trim()) || (paidSource && !paidConfirmed) || (params.video_source === 'loomloom' && (quoteKind !== 'video' || quoteChanged || !chargeConfirmed));
   $: if (boot && ['footage', 'sound', 'subtitles'].includes(stage)) void loadCatalog();
   $: if (boot && stage === 'sound' && voiceMode === 'tts') void loadVoices(voiceProvider);
   $: filteredHistory = history.filter(entry => `${entry.subject} ${entry.task_id}`.toLowerCase().includes(historySearch.toLowerCase()) && (historyFilter === 'all' || String(entry.state) === historyFilter));
@@ -168,14 +220,15 @@
     if (voicesLoading || (loadedVoiceProvider === provider && !force)) return;
     voicesLoading = true; voiceError = '';
     try {
-      const entries = !force && voiceCache.has(provider) ? voiceCache.get(provider)! : (await api(`/voices?provider=${encodeURIComponent(provider)}`)).voices;
+      let entries = !force && voiceCache.has(provider) ? voiceCache.get(provider)! : (await api(`/voices?provider=${encodeURIComponent(provider)}`)).voices;
       voiceCache.set(provider, entries);
       if (voiceProvider === provider) {
+        if (provider === 'minimax-tts' && params.voice_name?.startsWith('minimax:') && !entries.includes(params.voice_name)) entries = [params.voice_name,...entries];
         voiceList = entries; loadedVoiceProvider = provider;
         if (!entries.includes(params.voice_name) && entries.length) params.voice_name = entries.find((v: string) => v.startsWith('pt-BR')) || entries[0];
       }
     } catch (e) { voiceError = String(e); loadedVoiceProvider = provider; voiceList = []; }
-    finally { voicesLoading = false; }
+    finally { voicesLoading = false; if (voiceProvider !== provider && stage === 'sound' && voiceMode === 'tts') void loadVoices(voiceProvider); }
   }
   async function navigate(target: string) {
     view = target;
@@ -188,7 +241,8 @@
     value.video_materials = value.video_source === 'local' ? materials.map(m => ({provider: 'local', url: m.id})) : null;
     value.custom_audio_file = null;
     if (voiceMode === 'none') value.voice_name = 'no-voice';
-    return {params: value, narration_id: voiceMode === 'upload' ? narration?.id || '' : '', reference_id: reference?.id || '', prompt_id: prompt?.id || '', prompt_text: promptText, preview_id: preview?.id || '', quote_id: quote?.id || '', quote_inputs: quoteInputs || {}, charge_confirmed: chargeConfirmed};
+    if (voiceProvider === 'minimax-tts' && voiceMode === 'tts' && value.voice_name && !value.voice_name.startsWith('minimax:')) value.voice_name = 'minimax:' + value.voice_name.trim();
+    return {params: value, narration_id: voiceMode === 'upload' ? narration?.id || '' : '', reference_id: reference?.id || '', prompt_id: prompt?.id || '', prompt_text: promptText, preview_id: preview?.id || '', quote_id: quote?.id || '', quote_inputs: quoteInputs || {}, charge_confirmed: chargeConfirmed, paid_source_confirmed: paidConfirmed && paidSignature === paidApprovedSignature};
   }
   async function generate() {
     await run('generate', async () => {
@@ -206,20 +260,22 @@
   }
   async function generateScript() {
     await run('script', async () => {
-      const result = await api('/api/v1/scripts', {video_subject: params.video_subject, video_language: params.video_language, paragraph_number: params.paragraph_number, video_script_prompt: params.video_script_prompt, custom_system_prompt: params.custom_system_prompt});
+      const result = await api('/scripts', {video_subject: params.video_subject, video_language: params.video_language, paragraph_number: params.paragraph_number, video_script_prompt: params.video_script_prompt, custom_system_prompt: params.custom_system_prompt});
       params.video_script = result.data.video_script; preview = null;
     });
   }
   async function generateTerms() {
     await run('terms', async () => {
-      const result = await api('/api/v1/terms', {video_subject: params.video_subject, video_script: params.video_script, amount: 5, match_materials_to_script: params.match_materials_to_script});
+      const result = await api('/terms', {video_subject: params.video_subject, video_script: params.video_script, amount: 5, match_materials_to_script: params.match_materials_to_script});
       params.video_terms = result.data.video_terms.join(', ');
     });
   }
   async function audition(full = false) {
     await run('preview', async () => {
       const text = full ? params.video_script : sampleText || params.video_script?.slice(0, 160) || (language === 'pt' ? 'Olá! Esta é uma amostra da narração do seu vídeo.' : 'Hello! This is a sample of your video narration.');
+      const signature = narrationSignature;
       preview = await api('/previews', {...requestPayload(), text, full});
+      previewInputs = signature;
     });
   }
   async function uploadFiles(kind: string, event: Event) {
@@ -238,11 +294,12 @@
   }
   function restore(detail: Data) {
     params = {...structuredClone(boot!.defaults), ...detail.params};
+    const hadNarration = !!params.custom_audio_file;
     params.video_terms = Array.isArray(params.video_terms) ? params.video_terms.join(', ') : params.video_terms || '';
     materials = (params.video_materials || []).map((m: Data) => ({id: m.url.split(/[\\/]/).pop(), name: m.url.split(/[\\/]/).pop()}));
     if (params.custom_audio_file) notice = t('Uploaded narration and private reference audio must be uploaded again.');
     params.custom_audio_file = null; narration = null; reference = null; prompt = null; preview = null;
-    voiceMode = params.voice_name === 'no-voice' ? 'none' : 'tts'; view = 'editor';
+    voiceMode = hadNarration ? 'upload' : params.voice_name === 'no-voice' ? 'none' : 'tts'; view = 'editor';
     const prefix = String(params.voice_name || '').split(':')[0];
     voiceProvider = ({siliconflow: 'siliconflow', gemini: 'gemini-tts', mimo: 'mimo-tts', minimax: 'minimax-tts', elevenlabs: 'elevenlabs', chatterbox: 'chatterbox', kokoro: 'kokoro', fish_audio: 'fish_audio', voxcpm: 'voxcpm'} as Data)[prefix] || (String(params.voice_name).includes('V2') ? 'azure-tts-v2' : 'azure-tts-v1');
   }
@@ -254,7 +311,7 @@
   async function saveDefaults() {
     await run('settings', async () => {
       const saved = structuredClone(params); delete saved.video_materials; delete saved.custom_audio_file; delete saved.bgm_file;
-      await api('/settings', {ui: {...saved, language, theme, voice_mode: voiceMode, tts_server: voiceProvider}}, 'PATCH'); notice = t('Settings saved.');
+      await api('/settings', {app: {script_generation_backend: scriptBackend}, ui: {...saved, language, theme, voice_mode: voiceMode, tts_server: voiceProvider, loomloom_candidate_count: candidateCount, loomloom_script_duration_seconds: scriptDuration}}, 'PATCH'); notice = t('Settings saved.');
     });
   }
   async function presetImport(event: Event) {
@@ -265,13 +322,27 @@
   async function quoteBatch(kind: string) {
     await run('quote', async () => { const inputs = structuredClone(kind === 'script' ? scriptQuoteInput : videoQuoteInput); quote = await api('/loomloom/quote', {kind, inputs}); quoteInputs = inputs; quoteKind = kind; chargeConfirmed = false; });
   }
+  function suggestScenes() {
+    const terms = (Array.isArray(params.video_terms) ? params.video_terms : String(params.video_terms || '').split(/[,，\n]/)).map((v: string) => v.trim()).filter(Boolean);
+    if (!terms.length && params.video_subject?.trim()) terms.push(params.video_subject.trim());
+    if (!terms.length) return;
+    const count = Math.min(5, Math.max(1, Math.round(sceneCount)));
+    scenePrompts = Array.from({length:count},(_,i) => terms[i % terms.length] + (i >= terms.length ? `; alternative camera angle ${i + 1}` : '')).join('\n');
+  }
   async function executeScript() {
-    await run('loomloom', async () => { const result = await api('/loomloom/scripts', {kind: 'script', inputs: quoteInputs, quote_id: quote!.id, confirmed: chargeConfirmed}); scriptRunId = result.run_id; notice = `${t('Generating')}: ${scriptRunId}`; await pollScript(); });
+    await run('loomloom', async () => { const result = await api('/loomloom/scripts', {kind: 'script', inputs: quoteInputs, quote_id: quote!.id, confirmed: chargeConfirmed}); scriptRunId = result.run_id; sessionStorage.setItem('mpt-script-run',scriptRunId); notice = `${t('Generating')}: ${scriptRunId}`; await pollScript(); });
   }
   async function pollScript() {
+    if (!scriptRunId || scriptPolling) return;
+    scriptPolling = true;
     const id = scriptRunId;
-    try { const result = await api(`/loomloom/scripts/${id}`); if (result.results) { scriptCandidates = result.results.candidates; scriptRunId = ''; notice = result.results.errors?.map((e: Data) => e.message).join('\n') || t('Complete'); } }
-    catch (e) { error = String(e); scriptRunId = ''; }
+    try { const result = await api(`/loomloom/scripts/${id}`); if (result.results) { scriptCandidates = result.results.candidates; scriptRunId = ''; sessionStorage.removeItem('mpt-script-run'); notice = result.results.errors?.map((e: Data) => e.message).join('\n') || t('Complete'); } }
+    catch (e) { error = String(e); if ((e as Data).status === 404) {scriptRunId = ''; sessionStorage.removeItem('mpt-script-run');} }
+    finally { scriptPolling = false; }
+  }
+  async function settingsSaved() {
+    voiceCache.clear(); loadedVoiceProvider = ''; preview = null; quote = null; chargeConfirmed = false; paidConfirmed = false;
+    try {boot = await api('/bootstrap');} catch (e) {error = String(e); unauthorized = [401,403].includes((e as Data).status);}
   }
   async function loadCapabilities() {
     await run('capabilities', async () => { capabilities = await api('/loomloom/capabilities'); modelId = capabilities!.default_model_id; if (!capabilities!.aspect_ratios.includes(params.video_aspect)) params.video_aspect = capabilities!.aspect_ratios[0]; });
@@ -330,11 +401,13 @@
               <button disabled={!!busy} on:click={loadCapabilities}>{t('Load Capabilities')}</button>
               {#if capabilities}<Field label={t('Model')} bind:value={modelId} choices={capabilities.models.map((m: Data) => ({value:m.model_id, label:m.display_name}))}/>{/if}
               <Field label={t('Scene Prompts')} bind:value={scenePrompts} type="textarea" help={t('One scene per line. Maximum five scenes. Exact scene prompts are included in the quote.')}/>
-              {#if estimate}<p class="notice">{t('Estimated Narration')}: {estimate[0]}–{estimate[1]} s · {Math.ceil(estimate[0] / params.video_clip_duration)}–{Math.ceil(estimate[1] / params.video_clip_duration)} {t('clips needed; shorter footage repeats.')}</p>{/if}
+              <div class="form-grid"><Field label={t('Scene Count')} bind:value={sceneCount} type="number" min={1} max={5} step={1}/><button disabled={!!busy || !params.video_subject?.trim()} on:click={suggestScenes}>{t('Suggest Scenes')}</button></div>
+              {#if estimate}<p class="notice">{t(actualNarration ? 'Actual Narration' : 'Estimated Narration')}: {estimate[0]}–{estimate[1]} s · {Math.ceil(estimate[0] / params.video_clip_duration)}–{Math.ceil(estimate[1] / params.video_clip_duration)} {t('clips needed; shorter footage repeats.')} <button class="quiet" on:click={() => {sceneCount = Math.min(5, Math.max(1, Math.ceil(estimate![1] / params.video_clip_duration))); suggestScenes();}}>{t('Suggest Scenes')} ({Math.min(5, Math.max(1, Math.ceil(estimate[1] / params.video_clip_duration)))})</button></p>{/if}
               <button disabled={!!busy || !modelId || !scenePrompts.trim()} on:click={() => quoteBatch('video')}>{t('Quote')}</button>
             {:else}
               <Field label={t('Search Terms')} bind:value={params.video_terms} help={t('Separate terms with commas. Leave empty to generate them automatically.')}/><div class="actions"><button disabled={!!busy || !params.video_script} on:click={generateTerms}>{t('Generate Terms')}</button><button class="quiet" on:click={() => navigate('settings')}>{t('Provider Settings')}</button></div>
               {#if !['pexels', 'pixabay', 'coverr'].includes(params.video_source)}<p class="notice">{t('This source may create paid provider requests when you generate the video.')}</p>{/if}
+              {#if paidSource}<label class="field check"><input type="checkbox" checked={paidConfirmed && paidSignature === paidApprovedSignature} on:change={e => {paidApprovedSignature = paidSignature; paidConfirmed = (e.currentTarget as HTMLInputElement).checked;}}>{t('I authorize the selected provider to charge for this video generation.')}</label>{/if}
             {/if}
             <div class="form-grid"><Field label={t('Video Aspect')} bind:value={params.video_aspect} choices={params.video_source === 'loomloom' && capabilities ? capabilities.aspect_ratios : ['9:16', '16:9', '1:1']}/><Field label={t('Video Fit Mode')} bind:value={params.video_fit_mode} choices={[choice('cover', 'Cover'), choice('contain', 'Contain')]}/><Field label={t('Video Clip Duration')} bind:value={params.video_clip_duration} type="number" min={1} max={600} step={1}/><Field label={t('Video Clip Speed')} bind:value={params.video_clip_speed} type="number" min={.5} max={2} step={.1}/><Field label={t('Video Count')} bind:value={params.video_count} type="number" min={1} max={100} step={1}/><Field label={t('Video Concat Mode')} bind:value={params.video_concat_mode} choices={[choice('random','Random'),choice('sequential','Sequential')]}/></div>
             <Field label={t('Video Transition Mode')} bind:value={params.video_transition_mode} choices={[choice(null,'None'), ...['Shuffle','FadeIn','FadeOut','SlideIn','SlideOut','ZoomIn','ZoomOut']]}/><Field label={t('Match Materials to Script')} bind:value={params.match_materials_to_script} type="checkbox"/>
@@ -346,6 +419,7 @@
               {#if voicesLoading}<p role="status">{t('Loading voices…')}</p>{/if}{#if voiceError}<p class="notice error" role="alert">{voiceError}</p>{/if}
               <Field label={t('Find Voice')} bind:value={voiceFilter}/>
               <Field label={t('Voice')} bind:value={params.voice_name} choices={voiceList.filter(v => v.toLowerCase().includes(voiceFilter.toLowerCase()))}/>
+              {#if voiceProvider === 'minimax-tts'}<label class="field">{t('Manual Voice ID')}<input type="text" value={params.voice_name?.replace(/^minimax:/,'') || ''} on:input={e => {params.voice_name = 'minimax:' + (e.currentTarget as HTMLInputElement).value.trim();}}><small>{t('Enter a MiniMax voice ID, including a private or cloned voice.')}</small></label>{/if}
               <div class="actions"><button class="quiet" disabled={voicesLoading} on:click={() => loadVoices(voiceProvider,true)}>{t('Refresh')}</button><button class="quiet" on:click={() => navigate('settings')}>{t('Provider Settings')}</button></div>
               {#if voiceProvider === 'voxcpm'}
                 <label class="upload-zone">{t('Reference Audio')}<input type="file" accept="audio/*" disabled={!!busy} on:change={e => uploadFiles('reference',e)}></label>{#if reference}<p>{reference.name}<button class="quiet" on:click={() => {reference = null; preview = null;}}>{t('Remove')}</button></p>{/if}
@@ -380,13 +454,13 @@
             <label class="field check"><input type="checkbox" checked={!!params.text_background_color} on:change={e => params.text_background_color = (e.currentTarget as HTMLInputElement).checked ? '#000000' : false}>{t('Subtitle Background')}</label>{#if params.text_background_color}<Field label={t('Background Color')} bind:value={params.text_background_color} type="color"/><Field label={t('Rounded Background')} bind:value={params.rounded_subtitle_background} type="checkbox"/>{/if}
             <button class="quiet" on:click={() => navigate('settings')}>{t('Subtitle Provider Settings')}</button>
           {/if}
-          {#if quote && ((quoteKind === 'script' && stage === 'script') || (quoteKind === 'video' && stage === 'footage'))}<section class="quote-panel" aria-label={t('Quote')}><h2>{t('Quote')}</h2><p>{quote.estimated_buyer_payable_amount} {quote.currency} · {quote.task_count} {t('tasks')}</p><small>{t('Listing version')}: {quote.listing_version_id}</small>{#if quoteChanged}<p class="notice error">{t('Inputs changed. Request a new quote before confirming.')}</p>{:else}<Field label={t('I confirm this charge for these exact inputs.')} bind:value={chargeConfirmed} type="checkbox"/>{#if quoteKind === 'script'}<button class="primary" disabled={!!busy || !chargeConfirmed || !!scriptRunId} on:click={executeScript}>{t('Run Confirmed Batch')}</button>{/if}{/if}</section>{/if}
-          <footer class="generation-bar"><div><strong>{params.video_aspect} · {params.video_count} {t('video(s)')}</strong><small>{estimate ? `${t('Estimated Narration')}: ${estimate[0]}–${estimate[1]} s` : t('Write a script to estimate narration length.')}</small></div><button class="primary" disabled={!!busy || (!params.video_subject?.trim() && !params.video_script?.trim()) || (params.video_source === 'loomloom' && (quoteKind !== 'video' || quoteChanged || !chargeConfirmed))} on:click={generate}>{busy === 'generate' ? t('Generating') : t('Generate Video')}</button></footer>
+          {#if quote && ((quoteKind === 'script' && stage === 'script') || (quoteKind === 'video' && stage === 'footage'))}<section class="quote-panel" aria-label={t('Quote')}><h2>{t('Quote')}</h2><p>{quote.estimated_buyer_payable_amount} {quote.currency} · {quote.task_count} {t('tasks')}</p><p class="muted">{t('A quote is an estimate. Actual charges can differ, including when the estimate is zero.')}</p><small>{t('Listing version')}: {quote.listing_version_id}</small>{#if quoteChanged}<p class="notice error">{t('Inputs changed. Request a new quote before confirming.')}</p>{:else}<Field label={t('I confirm this charge for these exact inputs.')} bind:value={chargeConfirmed} type="checkbox"/>{#if quoteKind === 'script'}<button class="primary" disabled={!!busy || !chargeConfirmed || !!scriptRunId} on:click={executeScript}>{t('Run Confirmed Batch')}</button>{/if}{/if}</section>{/if}
+          <footer class="generation-bar"><div><strong>{params.video_aspect} · {params.video_count} {t('video(s)')}</strong><small>{estimate ? `${t('Estimated Narration')}: ${estimate[0]}–${estimate[1]} s` : t('Write a script to estimate narration length.')}</small></div><button class="primary" disabled={generationBlocked} on:click={generate}>{busy === 'generate' ? t('Generating') : t('Generate Video')}</button></footer>
         </section>
         <TaskPanel {task} {t} refresh={refreshTask} {restore}/>
       </div>
     {:else if view === 'settings'}
-      {#if SettingsComponent}<svelte:component this={SettingsComponent} {t} providers={boot.llm_providers} onsaved={() => { voiceCache.clear(); loadedVoiceProvider = ''; void api('/bootstrap').then(b => {boot = b;}); }}/>{:else}<p role="status">{t('Loading settings…')}</p>{/if}
+      {#if SettingsComponent}<svelte:component this={SettingsComponent} {t} providers={boot.llm_providers} onsaved={settingsSaved}/>{:else}<p role="status">{t('Loading settings…')}</p>{/if}
     {:else if view === 'history'}
       <section class="history-workspace"><div class="workspace-heading"><div><h1>{t('History')}</h1><p>{t('Revisit a render, download its files or use its settings as a starting point.')}</p></div><button disabled={!!busy} on:click={() => navigate('history')}>{t('Refresh')}</button></div><div class="form-grid"><Field label={t('Search History')} bind:value={historySearch}/><Field label={t('Status')} bind:value={historyFilter} choices={[choice('all','All'),choice('4','Generating'),choice('1','Complete'),choice('-1','Failed')]}/></div>
       {#if !filteredHistory.length}<p class="empty-state">{busy === 'history' ? t('Loading…') : t('No tasks found.')}</p>{/if}
