@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import Field from './Field.svelte';
   import TaskPanel from './TaskPanel.svelte';
-  import { api, download, upload, durationEstimate, type Data } from './api';
+  import { api, download, upload, durationEstimate, mediaLabels, speechLabels, musicLabels, type Data } from './api';
   let boot: Data | null = null;
   let params: Data = {};
   let loading = true;
@@ -41,6 +41,7 @@
   let historyFilter = 'all';
   let historyLimit = 30;
   let SettingsComponent: any = null;
+  let settingsCategory = 'script';
   let cache: Data | null = null;
   let cacheDays: number | undefined = undefined;
   let version: Data | null = null;
@@ -64,6 +65,49 @@
   let timer: ReturnType<typeof setInterval>;
   const voiceCache = new Map<string, string[]>();
   const pt: Data = {
+    'Script AI': 'IA de roteiro', 'Video & Images': 'Vídeo e imagens', 'Narration': 'Narração',
+    'Transcription & Subtitles': 'Transcrição e legendas', 'Provider Categories': 'Funções dos provedores',
+    'Script Provider': 'Provedor de roteiro', 'Video Provider': 'Provedor de vídeo ou imagens',
+    'Narration Provider': 'Provedor de narração', 'Music Provider': 'Fonte de música', 'Music': 'Música',
+    'Configure Script AI': 'Configurar IA de roteiro', 'Configure Video AI': 'Configurar fonte de vídeo',
+    'Configure Narration AI': 'Configurar IA de narração', 'Configure Music AI': 'Configurar IA de música',
+    'Back to Editor': 'Voltar ao editor', 'API Address': 'Endereço da API', 'API Keys': 'Chaves de API',
+    'Voice model': 'Modelo de voz', 'Voice ID': 'ID da voz', 'Voice IDs': 'IDs das vozes',
+    'Video Model': 'Modelo de vídeo', 'Video Endpoint': 'Rota de geração de vídeo', 'Music Model': 'Modelo de música',
+    'Service Region': 'Região do serviço', 'Resolution': 'Resolução', 'Whisper Model': 'Modelo Whisper',
+    'Device': 'Dispositivo', 'Compute Type': 'Tipo de cálculo', 'Subtitle Provider': 'Modo de transcrição e legendas',
+    'Configuration Section': 'Seção técnica', 'Server & Integrations': 'Servidor e integrações',
+    'Advanced provider options': 'Opções avançadas deste provedor', 'Credential saved on this server.': 'Chave já salva neste servidor.',
+    'Each function can use a different provider and API key. Switching categories keeps your other credentials.': 'Cada função pode usar um provedor e uma chave diferentes. Trocar de categoria mantém as demais credenciais.',
+    'Writes the script and search terms. This does not choose the video, voice or music AI.': 'Escreve o roteiro e os termos de busca. Não escolhe a IA de vídeo, voz ou música.',
+    'Stock services find existing footage. AI video services generate scenes; AI image services generate stills used in the video.': 'Bancos de vídeos buscam cenas prontas. IA de vídeo gera cenas novas; IA de imagens gera fotos usadas no vídeo.',
+    'Local media needs no API key. Upload your images or videos in the Footage stage.': 'Arquivos locais não precisam de chave. Envie suas imagens ou vídeos na etapa Mídia.',
+    'Turns your script into spoken narration. This is separate from transcription and music.': 'Transforma o roteiro em voz. É uma função diferente de transcrever áudio ou gerar música.',
+    'Google voice uses your Gemini API key, also used by Gemini scripts. It does not replace your video or music keys.': 'A voz do Google usa a chave Gemini, compartilhada com roteiros Gemini. Ela não substitui as chaves de vídeo ou música.',
+    'Choose a voice and listen to a sample in the Sound stage.': 'Escolha a voz e ouça uma amostra na etapa Áudio.',
+    'Edge TTS needs no API key. It uses an online voice service, not a local model.': 'Edge TTS não precisa de chave. Usa um serviço de voz online, não um modelo local.',
+    'MiMo voice shares the MiMo script API key. Its voice model is configured separately.': 'A voz MiMo compartilha a chave dos roteiros MiMo. O modelo de voz é configurado separadamente.',
+    'MiniMax voice can use a separate key here, or reuse your MiniMax script key when empty.': 'A voz MiniMax pode usar uma chave própria aqui. Se ficar vazia, usa a chave dos roteiros MiniMax.',
+    'Turns recorded speech into subtitle text. It does not generate a voice.': 'Transforma a fala de um áudio em texto para legendas. Não gera voz.',
+    'Narration timing — Edge / TTS': 'Tempos da narração — Edge / TTS', 'Whisper — local audio transcription': 'Whisper — transcrição local de áudio',
+    'Whisper runs locally without an API key. It is not the Google voice provider. Google voice is under Narration → Google Gemini.': 'Whisper roda localmente, sem chave de API. Não é o gerador de voz do Google. A voz do Google fica em Narração → Google Gemini.',
+    'Install Whisper support with': 'Instale o suporte Whisper com',
+    'The model downloads on first transcription. Restart the server after changing a model that was already loaded.': 'O modelo é baixado na primeira transcrição. Reinicie o servidor após trocar um modelo que já foi carregado.',
+    'Choose local background music or an AI music service. Narration voice models do not generate background music.': 'Escolha música local ou um serviço de música por IA. Modelos de narração não geram música de fundo.',
+    'ElevenLabs music shares its ElevenLabs voice API key, but uses a separate music model. Changing the music model does not change the voice model.': 'Música e voz ElevenLabs compartilham a chave, mas usam modelos diferentes. Alterar o modelo de música não altera o de voz.',
+    'This music option needs no API key. Choose or upload the track in the Sound stage.': 'Esta opção não precisa de chave. Escolha ou envie a faixa na etapa Áudio.',
+    'Upload-Post publishes finished videos to your configured social accounts. It is not a video-generation provider.': 'Upload-Post publica os vídeos prontos nas suas contas. Não é um gerador de vídeos.',
+    'Technical settings, server access and all original configuration fields. You do not need these to configure normal providers.': 'Configuração técnica, acesso ao servidor e todos os campos originais. Não é necessário entrar aqui para cadastrar os provedores.',
+    'Pexels — stock videos': 'Pexels — banco de vídeos', 'Pixabay — stock videos': 'Pixabay — banco de vídeos',
+    'Coverr — stock videos': 'Coverr — banco de vídeos', 'Local files — no API': 'Arquivos locais — sem API',
+    'AI images — OpenAI-compatible API': 'Imagens por IA — API compatível com OpenAI',
+    'WaveSpeed — AI video': 'WaveSpeed — vídeo por IA', 'Seedance — AI video': 'Seedance — vídeo por IA',
+    'OFox — AI video': 'OFox — vídeo por IA', 'Metaso / MiniMax — AI video': 'Metaso / MiniMax — vídeo por IA',
+    'MuAPI — AI video': 'MuAPI — vídeo por IA', 'LoomLoom — AI video': 'LoomLoom — vídeo por IA',
+    'Microsoft Edge TTS — no API key': 'Microsoft Edge TTS — sem chave', 'Microsoft Azure Speech — API key': 'Microsoft Azure Speech — com chave',
+    'Google Gemini — text to speech': 'Google Gemini — gerar voz', 'No music': 'Sem música',
+    'Random local music — no API': 'Música local aleatória — sem API', 'Built-in music — no API': 'Biblioteca de músicas — sem API',
+    'Uploaded music — no API': 'Música enviada — sem API', 'Sonilo — AI music': 'Sonilo — música por IA', 'ElevenLabs — AI music': 'ElevenLabs — música por IA',
     'Start with an idea. Shape the story before choosing the footage.': 'Comece por uma ideia. Acerte o roteiro antes de escolher a mídia.',
     'Choose where your images come from and how they fill the screen.': 'Escolha de onde vem a mídia e como ela ocupa a tela.',
     'Listen before rendering. Keep narration, music and cloning controls together.': 'Ouça antes de renderizar. Ajuste narração, música e clonagem de voz.',
@@ -230,7 +274,8 @@
     } catch (e) { voiceError = String(e); loadedVoiceProvider = provider; voiceList = []; }
     finally { voicesLoading = false; if (voiceProvider !== provider && stage === 'sound' && voiceMode === 'tts') void loadVoices(voiceProvider); }
   }
-  async function navigate(target: string) {
+  async function navigate(target: string, category = 'script') {
+    if (target === 'settings') settingsCategory = category;
     view = target;
     if (target === 'settings' && !SettingsComponent) SettingsComponent = (await import('./Settings.svelte')).default;
     if (target === 'history') await run('history', async () => { history = (await api(`/tasks?limit=${historyLimit}`)).tasks; });
@@ -340,8 +385,12 @@
     catch (e) { error = String(e); if ((e as Data).status === 404) {scriptRunId = ''; sessionStorage.removeItem('mpt-script-run');} }
     finally { scriptPolling = false; }
   }
-  async function settingsSaved() {
+  async function settingsSaved(changes: Data = {}) {
     voiceCache.clear(); loadedVoiceProvider = ''; preview = null; quote = null; chargeConfirmed = false; paidConfirmed = false;
+    if (changes.ui?.video_source !== undefined) params.video_source = changes.ui.video_source;
+    if (changes.ui?.tts_server !== undefined) voiceProvider = changes.ui.tts_server;
+    if (changes.ui?.bgm_type !== undefined) params.bgm_type = changes.ui.bgm_type;
+    if (changes.app?.script_generation_backend !== undefined) scriptBackend = changes.app.script_generation_backend;
     try {boot = await api('/bootstrap');} catch (e) {error = String(e); unauthorized = [401,403].includes((e as Data).status);}
   }
   async function loadCapabilities() {
@@ -385,7 +434,7 @@
             <Field label={t('Video Subject')} bind:value={params.video_subject} placeholder={t('What is this video about?')}/>
             <div class="script-editor"><Field label={t('Video Script')} bind:value={params.video_script} type="textarea" placeholder={t('Write your script, or generate a first draft from the subject.')}/></div>
             <Field label={t('Script Generation Backend')} bind:value={scriptBackend} choices={[choice('local','Configured LLM'),choice('loomloom','LoomLoom')]}/>
-            <div class="actions">{#if scriptBackend !== 'loomloom'}<button disabled={!!busy || !params.video_subject?.trim()} on:click={generateScript}>{busy === 'script' ? t('Generating') : t('Generate Script')}</button>{/if}<button class="quiet" on:click={() => navigate('settings')}>{t('Provider Settings')} · {boot.llm_provider}</button></div>
+            <div class="actions">{#if scriptBackend !== 'loomloom'}<button disabled={!!busy || !params.video_subject?.trim()} on:click={generateScript}>{busy === 'script' ? t('Generating') : t('Generate Script')}</button>{/if}<button class="quiet" on:click={() => navigate('settings','script')}>{t('Configure Script AI')} · {boot.llm_provider}</button></div>
             <div class="form-grid"><Field label={t('Script Language')} bind:value={params.video_language} placeholder={t('Auto')}/><Field label={t('Paragraphs')} bind:value={params.paragraph_number} type="number" min={1} max={10} step={1}/></div>
             <details><summary>{t('Script Instructions')}</summary><Field label={t('Script Instructions')} bind:value={params.video_script_prompt} type="textarea"/><Field label={t('System Prompt')} bind:value={params.custom_system_prompt} type="textarea"/></details>
             {#if scriptBackend === 'loomloom'}
@@ -393,7 +442,8 @@
             {/if}
             {#each scriptCandidates as candidate}<article class="candidate"><h3>{t('Script')} {candidate.row_index + 1}</h3><p>{candidate.script}</p><button on:click={() => {params.video_script = candidate.script; params.video_terms = candidate.video_terms.join(', ');}}>{t('Select Script')}</button></article>{/each}
           {:else if stage === 'footage'}
-            <Field label={t('Video Source')} bind:value={params.video_source} choices={boot.sources}/>
+            <Field label={t('Video Source')} bind:value={params.video_source} choices={boot.sources.map((value: string) => ({value,label:t(mediaLabels[value] || value)}))}/>
+            <button class="quiet" on:click={() => navigate('settings','video')}>{t('Configure Video AI')}</button>
             {#if params.video_source === 'local'}
               <label class="upload-zone">{t('Upload Local Media')}<input type="file" accept="video/*,image/*" multiple disabled={!!busy} on:change={e => uploadFiles('material', e)}></label>
               <ul class="file-list">{#each materials as material}<li><span>{material.name}</span><button class="quiet" on:click={() => materials = materials.filter(v => v.id !== material.id)}>{t('Remove')}</button></li>{/each}</ul>{#if !materials.length}<p class="muted">{t('No media uploaded.')}</p>{/if}
@@ -405,7 +455,7 @@
               {#if estimate}<p class="notice">{t(actualNarration ? 'Actual Narration' : 'Estimated Narration')}: {estimate[0]}–{estimate[1]} s · {Math.ceil(estimate[0] / params.video_clip_duration)}–{Math.ceil(estimate[1] / params.video_clip_duration)} {t('clips needed; shorter footage repeats.')} <button class="quiet" on:click={() => {sceneCount = Math.min(5, Math.max(1, Math.ceil(estimate![1] / params.video_clip_duration))); suggestScenes();}}>{t('Suggest Scenes')} ({Math.min(5, Math.max(1, Math.ceil(estimate[1] / params.video_clip_duration)))})</button></p>{/if}
               <button disabled={!!busy || !modelId || !scenePrompts.trim()} on:click={() => quoteBatch('video')}>{t('Quote')}</button>
             {:else}
-              <Field label={t('Search Terms')} bind:value={params.video_terms} help={t('Separate terms with commas. Leave empty to generate them automatically.')}/><div class="actions"><button disabled={!!busy || !params.video_script} on:click={generateTerms}>{t('Generate Terms')}</button><button class="quiet" on:click={() => navigate('settings')}>{t('Provider Settings')}</button></div>
+              <Field label={t('Search Terms')} bind:value={params.video_terms} help={t('Separate terms with commas. Leave empty to generate them automatically.')}/><div class="actions"><button disabled={!!busy || !params.video_script} on:click={generateTerms}>{t('Generate Terms')}</button></div>
               {#if !['pexels', 'pixabay', 'coverr'].includes(params.video_source)}<p class="notice">{t('This source may create paid provider requests when you generate the video.')}</p>{/if}
               {#if paidSource}<label class="field check"><input type="checkbox" checked={paidConfirmed && paidSignature === paidApprovedSignature} on:change={e => {paidApprovedSignature = paidSignature; paidConfirmed = (e.currentTarget as HTMLInputElement).checked;}}>{t('I authorize the selected provider to charge for this video generation.')}</label>{/if}
             {/if}
@@ -415,12 +465,12 @@
           {:else if stage === 'sound'}
             <h2>{t('Voice')}</h2><Field label={t('Voice Mode')} bind:value={voiceMode} choices={[choice('tts', 'TTS'),choice('upload','Upload'),choice('none','Silent')]}/>
             {#if voiceMode === 'tts'}
-              <Field label={t('Voice Provider')} bind:value={voiceProvider} choices={Object.entries(boot.tts_providers).map(([value,label]) => ({value,label:String(label)}))}/>
+              <Field label={t('Voice Provider')} bind:value={voiceProvider} choices={Object.entries(boot.tts_providers).map(([value,label]) => ({value,label:t(speechLabels[value] || String(label))}))}/>
               {#if voicesLoading}<p role="status">{t('Loading voices…')}</p>{/if}{#if voiceError}<p class="notice error" role="alert">{voiceError}</p>{/if}
               <Field label={t('Find Voice')} bind:value={voiceFilter}/>
               <Field label={t('Voice')} bind:value={params.voice_name} choices={voiceList.filter(v => v.toLowerCase().includes(voiceFilter.toLowerCase()))}/>
               {#if voiceProvider === 'minimax-tts'}<label class="field">{t('Manual Voice ID')}<input type="text" value={params.voice_name?.replace(/^minimax:/,'') || ''} on:input={e => {params.voice_name = 'minimax:' + (e.currentTarget as HTMLInputElement).value.trim();}}><small>{t('Enter a MiniMax voice ID, including a private or cloned voice.')}</small></label>{/if}
-              <div class="actions"><button class="quiet" disabled={voicesLoading} on:click={() => loadVoices(voiceProvider,true)}>{t('Refresh')}</button><button class="quiet" on:click={() => navigate('settings')}>{t('Provider Settings')}</button></div>
+              <div class="actions"><button class="quiet" disabled={voicesLoading} on:click={() => loadVoices(voiceProvider,true)}>{t('Refresh')}</button><button class="quiet" on:click={() => navigate('settings','speech')}>{t('Configure Narration AI')}</button></div>
               {#if voiceProvider === 'voxcpm'}
                 <label class="upload-zone">{t('Reference Audio')}<input type="file" accept="audio/*" disabled={!!busy} on:change={e => uploadFiles('reference',e)}></label>{#if reference}<p>{reference.name}<button class="quiet" on:click={() => {reference = null; preview = null;}}>{t('Remove')}</button></p>{/if}
                 <label class="upload-zone">{t('Prompt Audio')}<input type="file" accept="audio/*" disabled={!!busy} on:change={e => uploadFiles('prompt',e)}></label>{#if prompt}<p>{prompt.name}<button class="quiet" on:click={() => {prompt = null; promptText = ''; preview = null;}}>{t('Remove')}</button></p><button disabled={!!busy} on:click={() => run('transcribe', async () => {promptText = (await api('/transcription', {id: prompt!.id})).text;})}>{t('Transcribe Audio')}</button>{/if}
@@ -434,12 +484,12 @@
               <label class="upload-zone">{t('Upload Narration')}<input type="file" accept="audio/*" disabled={!!busy} on:change={e => uploadFiles('narration',e)}></label>{#if narration}<p>{narration.name}</p><audio controls src={narration.url} preload="metadata"></audio>{/if}<p class="muted">{t('Use Whisper subtitles for uploaded narration; the model loads only when transcription is requested.')}</p>
             {/if}
             <div class="form-grid"><Field label={t('Voice Volume')} bind:value={params.voice_volume} type="number" min={0} max={10} step={.1}/><Field label={t('Voice Rate')} bind:value={params.voice_rate} type="number" min={.25} max={4} step={.05}/></div>
-            <h2>{t('Background Music')}</h2><Field label={t('Background Music')} bind:value={params.bgm_type} choices={[choice('', 'None'),choice('random','Random'),choice('preset','Built-in'),choice('custom','Custom'), 'sonilo','elevenlabs']}/>
+            <h2>{t('Background Music')}</h2><Field label={t('Background Music')} bind:value={params.bgm_type} choices={Object.entries(musicLabels).map(([value,label]) => ({value,label:t(label)}))}/>
             {#if params.bgm_type === 'preset' || params.bgm_type === 'custom'}
               <Field label={t('Background Music')} bind:value={params.bgm_file} choices={params.bgm_type === 'preset' ? catalog?.builtin_music || [] : catalog?.music?.map((m: Data) => ({value:m.id,label:m.name})) || []}/>{#if params.bgm_file}<audio class="audio-player" controls src="/api/v1/studio/music/{encodeURIComponent(params.bgm_file.split(/[\\/]/).pop())}" preload="none"></audio>{/if}
             {/if}
             {#if params.bgm_type === 'custom'}<label class="upload-zone">{t('Upload Music')}<input type="file" accept="audio/*" disabled={!!busy} on:change={e => uploadFiles('music',e)}></label>{/if}
-            {#if ['sonilo','elevenlabs'].includes(params.bgm_type)}<Field label={t('Music Prompt')} bind:value={params.video_music_prompt} type="textarea"/><button class="quiet" on:click={() => navigate('settings')}>{t('Provider Settings')}</button>{/if}
+            {#if ['sonilo','elevenlabs'].includes(params.bgm_type)}<Field label={t('Music Prompt')} bind:value={params.video_music_prompt} type="textarea"/><button class="quiet" on:click={() => navigate('settings','music')}>{t('Configure Music AI')}</button>{/if}
             <Field label={t('Music Volume')} bind:value={params.bgm_volume} type="number" min={0} max={10} step={.05}/>
           {:else}
             <Field label={t('Enable Subtitles')} bind:value={params.subtitle_enabled} type="checkbox"/>
@@ -452,7 +502,7 @@
             {#if params.subtitle_position === 'custom'}<Field label={t('Custom Position')} bind:value={params.custom_position} type="number" min={0} max={100} step={1}/>{/if}
             <Field label={t('Subtitle Display Mode')} bind:value={params.subtitle_display_mode} choices={[choice('sentence','Sentence'),choice('word_by_word','Word by Word')]}/><Field label={t('Subtitle Animation')} bind:value={params.subtitle_animation} choices={[choice('none','None'),choice('pop_spring','Pop Spring')]}/>
             <label class="field check"><input type="checkbox" checked={!!params.text_background_color} on:change={e => params.text_background_color = (e.currentTarget as HTMLInputElement).checked ? '#000000' : false}>{t('Subtitle Background')}</label>{#if params.text_background_color}<Field label={t('Background Color')} bind:value={params.text_background_color} type="color"/><Field label={t('Rounded Background')} bind:value={params.rounded_subtitle_background} type="checkbox"/>{/if}
-            <button class="quiet" on:click={() => navigate('settings')}>{t('Subtitle Provider Settings')}</button>
+            <button class="quiet" on:click={() => navigate('settings','transcription')}>{t('Subtitle Provider Settings')}</button>
           {/if}
           {#if quote && ((quoteKind === 'script' && stage === 'script') || (quoteKind === 'video' && stage === 'footage'))}<section class="quote-panel" aria-label={t('Quote')}><h2>{t('Quote')}</h2><p>{quote.estimated_buyer_payable_amount} {quote.currency} · {quote.task_count} {t('tasks')}</p><p class="muted">{t('A quote is an estimate. Actual charges can differ, including when the estimate is zero.')}</p><small>{t('Listing version')}: {quote.listing_version_id}</small>{#if quoteChanged}<p class="notice error">{t('Inputs changed. Request a new quote before confirming.')}</p>{:else}<Field label={t('I confirm this charge for these exact inputs.')} bind:value={chargeConfirmed} type="checkbox"/>{#if quoteKind === 'script'}<button class="primary" disabled={!!busy || !chargeConfirmed || !!scriptRunId} on:click={executeScript}>{t('Run Confirmed Batch')}</button>{/if}{/if}</section>{/if}
           <footer class="generation-bar"><div><strong>{params.video_aspect} · {params.video_count} {t('video(s)')}</strong><small>{estimate ? `${t('Estimated Narration')}: ${estimate[0]}–${estimate[1]} s` : t('Write a script to estimate narration length.')}</small></div><button class="primary" disabled={generationBlocked} on:click={generate}>{busy === 'generate' ? t('Generating') : t('Generate Video')}</button></footer>
@@ -460,7 +510,7 @@
         <TaskPanel {task} {t} refresh={refreshTask} {restore}/>
       </div>
     {:else if view === 'settings'}
-      {#if SettingsComponent}<svelte:component this={SettingsComponent} {t} providers={boot.llm_providers} onsaved={settingsSaved}/>{:else}<p role="status">{t('Loading settings…')}</p>{/if}
+      {#if SettingsComponent}<svelte:component this={SettingsComponent} {t} providers={boot.llm_providers} sources={boot.sources} speechProviders={boot.tts_providers} initialCategory={settingsCategory} videoSource={params.video_source} speechSource={voiceProvider} musicSource={params.bgm_type} onsaved={settingsSaved} onclose={() => navigate('editor')}/>{:else}<p role="status">{t('Loading settings…')}</p>{/if}
     {:else if view === 'history'}
       <section class="history-workspace"><div class="workspace-heading"><div><h1>{t('History')}</h1><p>{t('Revisit a render, download its files or use its settings as a starting point.')}</p></div><button disabled={!!busy} on:click={() => navigate('history')}>{t('Refresh')}</button></div><div class="form-grid"><Field label={t('Search History')} bind:value={historySearch}/><Field label={t('Status')} bind:value={historyFilter} choices={[choice('all','All'),choice('4','Generating'),choice('1','Complete'),choice('-1','Failed')]}/></div>
       {#if !filteredHistory.length}<p class="empty-state">{busy === 'history' ? t('Loading…') : t('No tasks found.')}</p>{/if}

@@ -43,10 +43,9 @@ test('settings do not autosave edits or return configured credentials', async ({
     if(route.request().method() === 'PATCH') { saves.push(route.request().postDataJSON()); await route.fulfill({json:{saved:true,pending:false}}); }
     else await route.continue();
   });
-  await page.getByLabel('Provedor LLM', {exact:true}).selectOption('openai');
-  await page.getByLabel('OpenAI: Api Key', {exact:true}).fill('test-key-not-real');
+  await page.getByLabel('Provedor de roteiro', {exact:true}).selectOption('openai');
+  await page.getByLabel('OpenAI: Chave da API', {exact:true}).fill('test-key-not-real');
   expect(saves).toEqual([]);
-  await page.getByRole('button',{name:'Usar este provedor'}).click();
   await page.getByRole('button',{name:'Salvar configurações'}).click();
   await expect.poll(() => saves.length).toBe(1);
   expect(saves[0].app.openai_api_key).toBe('test-key-not-real');
@@ -80,12 +79,18 @@ test('paid sources require a fresh confirmation when generation inputs change', 
   await expect(generate).toBeDisabled();
 });
 
-test('non-LLM provider fields remain visible in settings', async ({page}) => {
+test('provider settings are separated by their video and narration function', async ({page}) => {
   await page.goto('/');
   await page.getByRole('button',{name:'Configurações',exact:true}).click();
-  await expect(page.getByLabel('Openai Image Api Keys',{exact:true})).toBeVisible();
-  await expect(page.getByLabel('Volcengine Seedance Api Key',{exact:true})).toBeVisible();
-  await expect(page.getByLabel('Mimo Tts Model Name',{exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Vídeo e imagens',exact:true}).click();
+  await page.getByLabel('Provedor de vídeo ou imagens').selectOption('openai_image');
+  await expect(page.getByLabel('Chaves de API',{exact:true})).toBeVisible();
+  await page.getByLabel('Provedor de vídeo ou imagens').selectOption('volcengine_seedance');
+  await expect(page.getByLabel('Chave da API',{exact:true})).toBeVisible();
+  await expect(page.getByLabel('Modelo',{exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Narração',exact:true}).click();
+  await page.getByLabel('Provedor de narração').selectOption('mimo-tts');
+  await expect(page.getByLabel('Modelo de voz',{exact:true})).toBeVisible();
 });
 
 test('restoring uploaded narration never silently switches to paid TTS', async ({page}) => {
@@ -149,7 +154,80 @@ test('importing a rotated server API key returns to login instead of trapping th
   await page.route('**/api/v1/studio/keys/import',route=>{rotated=true;return route.fulfill({json:{saved:true}});});
   await page.goto('/');
   await page.getByRole('button',{name:'Configurações',exact:true}).click();
-  await expect(page.getByLabel('Provedor LLM',{exact:true})).toBeVisible();
+  await expect(page.getByLabel('Provedor de roteiro',{exact:true})).toBeVisible();
   await page.getByLabel('Importar credenciais',{exact:true}).setInputFiles({name:'keys.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({schema:'moneyprinterturbo.key-backup',version:1,keys:{app:{api_key:'rotated'}}}))});
   await expect(page.getByRole('heading',{name:'Entrar',exact:true})).toBeVisible();
 });
+
+test('Google narration and AI music keys save independently without overwriting other providers', async ({page}) => {
+  const saves: any[] = [];
+  await page.route('**/api/v1/studio/settings',route => {
+    if(route.request().method() === 'PATCH') {saves.push(route.request().postDataJSON());return route.fulfill({json:{saved:true,pending:false}});}
+    return route.continue();
+  });
+  await page.goto('/');
+  await page.getByRole('button',{name:'3 Áudio',exact:true}).click();
+  await page.getByLabel('Provedor de voz').selectOption('gemini-tts');
+  await page.getByRole('button',{name:'Configurar IA de narração',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Narração',exact:true})).toBeVisible();
+  await expect(page.getByLabel('Provedor de narração')).toHaveValue('gemini-tts');
+  await page.getByLabel('Chave da API',{exact:true}).fill('google-test-key');
+  await page.getByRole('button',{name:'Música',exact:true}).click();
+  await page.getByLabel('Fonte de música').selectOption('sonilo');
+  await page.getByLabel('Chave da API',{exact:true}).fill('music-test-key');
+  await page.getByRole('button',{name:'Vídeo e imagens',exact:true}).click();
+  await page.getByLabel('Provedor de vídeo ou imagens').selectOption('ofox');
+  await page.getByLabel('Chave da API',{exact:true}).fill('video-test-key');
+  expect(saves).toEqual([]);
+  await page.getByRole('button',{name:'Salvar configurações',exact:true}).click();
+  await expect.poll(()=>saves.length).toBe(1);
+  expect(saves[0].app.gemini_api_key).toBe('google-test-key');
+  expect(saves[0].app.sonilo_api_key).toBe('music-test-key');
+  expect(saves[0].app.ofox_api_key).toBe('video-test-key');
+  expect(saves[0].app.openai_api_key).toBeUndefined();
+  expect(saves[0].app.pexels_api_keys).toBeUndefined();
+  expect(saves[0].ui.video_source).toBe('ofox');
+  expect(saves[0].ui.bgm_type).toBe('sonilo');
+  await page.getByRole('button',{name:'Voltar ao editor',exact:true}).click();
+  await expect(page.getByLabel('Provedor de voz')).toHaveValue('gemini-tts');
+  await expect(page.getByRole('combobox',{name:'Música de fundo',exact:true})).toHaveValue('sonilo');
+  await page.getByRole('button',{name:'2 Mídia',exact:true}).click();
+  await expect(page.getByLabel('Fonte de mídia')).toHaveValue('ofox');
+});
+
+test('Google voice and local Whisper transcription are clearly distinct', async ({page}) => {
+  await page.goto('/');
+  await page.getByRole('button',{name:'4 Legendas',exact:true}).click();
+  await page.getByRole('button',{name:'Configurar provedor de legendas',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Transcrição e legendas',exact:true})).toBeVisible();
+  await page.getByLabel('Modo de transcrição e legendas').selectOption('whisper');
+  await expect(page.getByLabel('Modelo Whisper')).toBeVisible();
+  await expect(page.getByLabel('Chave da API',{exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'Narração',exact:true}).click();
+  await page.getByLabel('Provedor de narração').selectOption('gemini-tts');
+  await expect(page.getByLabel('Chave da API',{exact:true})).toBeVisible();
+  await expect(page.getByText('gemini-2.5-flash-preview-tts',{exact:false})).toBeVisible();
+  await expect(page.getByLabel('Modelo Whisper')).toHaveCount(0);
+  await page.getByRole('button',{name:'Música',exact:true}).click();
+  await page.getByLabel('Fonte de música').selectOption('elevenlabs');
+  await expect(page.getByLabel('Modelo de música')).toBeVisible();
+  await expect(page.getByLabel('Modelo',{exact:true})).toHaveCount(0);
+});
+
+for (const width of [1440,390]) {
+  test(`provider categories fit ${width}px and retain technical settings`, async ({page}) => {
+    await page.setViewportSize({width,height:1000});
+    await page.goto('/');
+    await page.getByRole('button',{name:'Configurações',exact:true}).click();
+    await expect(page.getByLabel('Provedor de roteiro',{exact:true})).toBeVisible();
+    await page.getByRole('button',{name:'Avançado',exact:true}).click();
+    await expect(page.getByLabel('Llm Provider',{exact:true})).toBeVisible();
+    await page.getByLabel('Seção técnica').selectOption('whisper');
+    await expect(page.getByLabel('Modelo Whisper',{exact:true})).toBeVisible();
+    await page.getByRole('button',{name:'Narração',exact:true}).click();
+    await page.getByLabel('Provedor de narração').selectOption('gemini-tts');
+    await expect(page.getByLabel('Chave da API',{exact:true})).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (process.env.MPT_CAPTURE) await page.screenshot({path:`../.impeccable/review/settings-${width}.png`,fullPage:true});
+  });
+}

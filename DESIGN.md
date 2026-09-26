@@ -177,6 +177,8 @@ The generation summary and primary action share a footer. It is sticky at the bo
 
 Fields have a 7px label gap and 18px bottom margin. Paired fields use two equal columns with a 20px gap, reducing to 12px on mobile; settings fields collapse to one column on mobile. Settings, history and help use centered workspaces, section rules and grouped fields. Settings section navigation is sticky on larger screens and wraps horizontally on mobile.
 
+Provider settings are organized by purpose: script, video/images, narration, transcription/subtitles, music and publishing. Keep each provider selector beside its credentials, state explicitly when an account key is shared, and preserve technical fields under Advanced. Editor stages link directly to the relevant category; category changes never save implicitly.
+
 ## Elevation & Depth
 
 The interface has no shadow vocabulary. Surface color, spacing and one-pixel rules establish depth. The editor is bounded by quiet vertical rules; settings have a white working panel. Expandable advanced groups and history entries use horizontal rules rather than a card around each field.
@@ -237,4 +239,3 @@ Output remains a separate section while stages change. Empty output is a dashed,
 - **Don't** use a card or shadow around every field.
 - **Don't** use status color as the only status signal.
 - **Don't** turn the studio's three-column composition into a universal layout requirement.
-

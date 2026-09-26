@@ -66,6 +66,14 @@ Voice cloning reference/prompt audio is held only in a bounded process-local cac
 
 Paid execution is never performed as a migration test. Mocked tests verify confirmation, input/account binding and idempotency. Actual provider access depends on your credentials, account balance and service availability.
 
+## Provider settings
+
+Settings are grouped by function: script AI, video/images, narration, transcription/subtitles, music and social publishing. Each group shows its own provider and credentials. Switching categories keeps unsaved edits; only **Save Settings** writes them. **Advanced** retains the original technical configuration fields.
+
+For Google-generated voice, choose **Sound → Voice Provider → Google Gemini**, then **Configure Narration AI** to enter the Gemini API key and save. Return to Sound to choose a voice and request a sample. Gemini narration shares the Gemini script key, not the video or music keys. The existing voice integration uses `gemini-2.5-flash-preview-tts`.
+
+Whisper is local speech-to-text under **Transcription & Subtitles**, not a voice generator. **Music** separates local/uploaded tracks from Sonilo and ElevenLabs AI music. ElevenLabs voice and music share one account key but have distinct model settings.
+
 ## Development and checks
 
 ```sh

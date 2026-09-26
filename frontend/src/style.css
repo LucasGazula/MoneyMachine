@@ -11,3 +11,4 @@
 @media(prefers-color-scheme:dark){:root[data-theme=system]{--control-line:#859488}}
 .field input,.field textarea,.field select,label.field input,label.field textarea,label.field select,.preferences select{border:1px solid var(--control-line)}
 @media(max-width:600px){.generation-bar{position:static}}
+.settings-workspace>.workspace-heading{flex-wrap:wrap}.settings-workspace>.workspace-heading>div:first-child{flex:1;min-width:240px}.settings-workspace>.workspace-heading .actions{margin-top:0}.credential-status{display:block;margin:0 0 8px}

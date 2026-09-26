@@ -1,6 +1,22 @@
 export type Data = Record<string, any>;
 export type Translate = (key: string) => string;
 
+export const mediaLabels: Record<string, string> = {
+  pexels: 'Pexels — stock videos', pixabay: 'Pixabay — stock videos', coverr: 'Coverr — stock videos',
+  local: 'Local files — no API', openai_image: 'AI images — OpenAI-compatible API',
+  wavespeed: 'WaveSpeed — AI video', volcengine_seedance: 'Seedance — AI video',
+  ofox: 'OFox — AI video', metaso_minimax: 'Metaso / MiniMax — AI video',
+  muapi: 'MuAPI — AI video', loomloom: 'LoomLoom — AI video',
+};
+export const speechLabels: Record<string, string> = {
+  'azure-tts-v1': 'Microsoft Edge TTS — no API key', 'azure-tts-v2': 'Microsoft Azure Speech — API key',
+  'gemini-tts': 'Google Gemini — text to speech',
+};
+export const musicLabels: Record<string, string> = {
+  '': 'No music', random: 'Random local music — no API', preset: 'Built-in music — no API',
+  custom: 'Uploaded music — no API', sonilo: 'Sonilo — AI music', elevenlabs: 'ElevenLabs — AI music',
+};
+
 export async function api(path: string, body?: unknown, method?: string): Promise<any> {
   const target = path.startsWith('/api/') ? path : `/api/v1/studio${path}`;
   const response = await fetch(target, {
