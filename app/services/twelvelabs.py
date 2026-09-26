@@ -30,18 +30,24 @@ Configure a TwelveLabs API key from the TwelveLabs dashboard (https://twelvelabs
 """
 
 import math
+from importlib import import_module
 from functools import lru_cache
 from typing import List, Optional
 
 from loguru import logger
 
 from app.config import config
-from app.services import material
 
 DEFAULT_MARENGO_MODEL = "marengo3.0"
 DEFAULT_PEGASUS_MODEL = "pegasus1.5"
 # Pegasus requires max_tokens in [512, 98304]; 512 is plenty for a one-line QA.
 _PEGASUS_MIN_MAX_TOKENS = 512
+
+
+def __getattr__(name):
+    if name == "material":
+        return import_module("app.services.material")
+    raise AttributeError(name)
 
 
 def is_enabled() -> bool:
@@ -54,6 +60,7 @@ def _client():
     # Lazy import + rotated key reuse mirrors the other providers in
     # material.py (get_api_key rotates across configured keys).
     from twelvelabs import TwelveLabs
+    from app.services import material
 
     api_key = material.get_api_key("twelvelabs_api_keys")
     return TwelveLabs(api_key=api_key)

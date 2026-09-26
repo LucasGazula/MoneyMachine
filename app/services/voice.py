@@ -24,9 +24,6 @@ import requests
 from edge_tts import SubMaker
 from edge_tts.srt_composer import Subtitle
 from loguru import logger
-from moviepy.video.tools import subtitles
-from moviepy.audio.io.AudioFileClip import AudioFileClip
-from openai import OpenAI
 
 from app.config import config
 from app.utils import utils
@@ -89,6 +86,19 @@ NO_VOICE_NAME = "no-voice"
 # 已经手动调用过该分支的 API 用户升级后立即失效；WebUI 和新代码统一使用
 # 更明确的 `no-voice`。
 _NO_VOICE_ALIASES = {NO_VOICE_NAME, "none"}
+
+
+def AudioFileClip(*args, **kwargs):
+    """Keep voice discovery independent of the rendering runtime."""
+    from moviepy.audio.io.AudioFileClip import AudioFileClip as clip
+
+    return clip(*args, **kwargs)
+
+
+def OpenAI(*args, **kwargs):
+    from openai import OpenAI as client
+
+    return client(*args, **kwargs)
 
 
 def _configure_pydub_ffmpeg(audio_segment_cls):
@@ -2866,6 +2876,8 @@ def _write_subtitle_items(sub_items: list[str], subtitle_file: str) -> bool:
     - `True`：字幕文件成功落盘且可被 moviepy 解析；
     - `False`：字幕文件写入或解析失败。
     """
+    from moviepy.video.tools import subtitles
+
     try:
         ensure_file_path_exists(subtitle_file)
         with open(subtitle_file, "w", encoding="utf-8") as file:

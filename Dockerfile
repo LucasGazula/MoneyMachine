@@ -1,4 +1,11 @@
-# Use an official Python runtime as a parent image
+FROM node:22-alpine AS frontend
+WORKDIR /build/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+# The final image has no Node or Streamlit service.
 FROM python:3.11-slim-bullseye
 
 # Set the working directory in the container
@@ -93,13 +100,15 @@ RUN if [ "$PIP_USE_OFFICIAL" = "1" ]; then \
 
 # Now copy the rest of the codebase into the image
 COPY . .
+COPY --from=frontend /build/resource/public/studio/ ./resource/public/studio/
 
 # Expose the port the app runs on
 EXPOSE 8501
+EXPOSE 8080
 
 # 容器内部必须监听 0.0.0.0，宿主机仍通过 docker 端口映射限制为 127.0.0.1。
 # browser.serverAddress 只决定浏览器展示的访问地址，不能替代 server.address。
-CMD ["streamlit", "run", "./webui/Main.py", "--server.address=0.0.0.0", "--server.port=8501", "--browser.serverAddress=127.0.0.1", "--server.enableCORS=True", "--browser.gatherUsageStats=False", "--client.toolbarMode=minimal", "--logger.hideWelcomeMessage=True", "--server.showEmailPrompt=False"]
+CMD ["python", "-m", "uvicorn", "app.asgi:app", "--host=0.0.0.0", "--port=8501"]
 
 # 1. Build the Docker image using the following command
 # docker build -t moneyprinterturbo .

@@ -285,4 +285,6 @@ task_dir = utils.task_dir()
 app.mount("/tasks", StaticFiles(directory=task_dir, html=True), name="")
 
 public_dir = utils.public_dir()
-app.mount("/", StaticFiles(directory=public_dir, html=True), name="")
+studio_dir = os.path.join(public_dir, "studio")
+frontend_dir = studio_dir if os.path.isfile(os.path.join(studio_dir, "index.html")) else public_dir
+app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="studio")

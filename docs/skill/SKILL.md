@@ -10,6 +10,8 @@ metadata:
 
 # MoneyPrinterTurbo Video Generation
 
+Fork migration note: the CLI generation workflow is unchanged. The default browser interface now uses the same FastAPI process and static Svelte assets; see `docs/studio.md`. Install the `whisper` or `azure-speech` uv extras only when the selected operation needs those optional runtimes.
+
 The user only needs to provide a video topic or script. Complete installation, configuration reuse, generation, waiting, and final MP4 delivery automatically. Do not stop after giving instructions or commands.
 
 ## Required Behavior

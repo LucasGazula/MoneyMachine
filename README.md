@@ -20,6 +20,8 @@
 
 ## 界面预览 🖥️
 
+> This fork now uses a lightweight Svelte + FastAPI studio. See [setup and migration notes](docs/studio.md); the screenshots below show the optional legacy UI.
+
 <h4 align="center">WebUI</h4>
 
 ![](docs/webui.jpg)

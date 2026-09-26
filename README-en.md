@@ -20,6 +20,8 @@ English | [简体中文](README.md) | [日本語](README-ja.md) | [Releases](htt
 
 ## Screenshots 🖥️
 
+> **Lightweight fork:** the default UI is now Svelte + FastAPI, without a Streamlit process. See [Studio setup, optional runtimes and migration notes](docs/studio.md). Build the frontend once with `cd frontend && npm ci && npm run build` before launching locally. Existing screenshots below show the legacy UI.
+
 <h4 align="center">WebUI</h4>
 
 ![](docs/webui-en.jpg)
@@ -309,7 +311,7 @@ Use the local setup or Docker instructions below.
 #### ① Clone the Project
 
 ```shell
-git clone https://github.com/harry0703/MoneyPrinterTurbo.git
+git clone --branch migration https://github.com/LucasGazula/MoneyPrinterTurbo.git
 ```
 
 #### ② Complete the Initial Setup
@@ -383,7 +385,7 @@ Note that you need to execute the following commands in the `root directory` of 
 ```
 
 You can also run `webui.bat` in CMD.
-`webui.bat` prefers the project `.venv` or bundled Python from the portable package. If no project Python is found but `uv` is installed, it automatically falls back to `uv run streamlit`.
+`webui.bat` prefers the project `.venv` or bundled Python. Otherwise it falls back to `uv run uvicorn`. Build the static frontend first as described in [Studio setup](docs/studio.md).
 To allow other devices on your LAN to access the WebUI, run `set MPT_WEBUI_HOST=0.0.0.0` before running `webui.bat`.
 
 ###### macOS or Linux

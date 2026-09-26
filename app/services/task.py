@@ -5,6 +5,7 @@ import re
 import socket
 import threading
 import time
+from importlib import import_module
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from functools import partial
 from os import path
@@ -18,23 +19,28 @@ from app.models.schema import VideoConcatMode, VideoParams
 from app.services import bgm as bgm_service
 from app.services import (
     elevenlabs_music,
-    llm,
     loomloom,
-    material,
     metaso_minimax,
     muapi,
     ofox,
     sonilo,
-    subtitle,
     task_artifacts,
     twelvelabs,
-    video,
     volcengine_seedance,
-    voice,
 )
 from app.services import upload_post
 from app.services import state as sm
 from app.utils import file_security, utils
+
+
+def __getattr__(name):
+    # Preserve integrations that access task.voice/task.video directly, while
+    # keeping media and model libraries out of the idle HTTP server.
+    if name in {"llm", "material", "subtitle", "video", "voice"}:
+        module = import_module(f"app.services.{name}")
+        globals()[name] = module
+        return module
+    raise AttributeError(name)
 
 
 # 发布请求最长可等待数分钟，不能继续占用视频生成任务的并发名额。
@@ -290,6 +296,8 @@ def _mark_task_failed(
 
 
 def generate_script(task_id, params):
+    from app.services import llm
+
     logger.info("\n\n## generating video script")
     video_script = params.video_script.strip()
     if not video_script:
@@ -311,6 +319,8 @@ def generate_script(task_id, params):
 
 
 def generate_terms(task_id, params, video_script):
+    from app.services import llm
+
     logger.info("\n\n## generating video terms")
     video_terms = params.video_terms
     if not video_terms:
@@ -500,6 +510,8 @@ def generate_audio(
         - audio_duration: duration of the audio in seconds
         - sub_maker: subtitle maker object if TTS is used, None otherwise
     """
+    from app.services import voice
+
     logger.info("\n\n## generating audio")
     # /audio 和 /subtitle 请求模型不包含 custom_audio_file，
     # 这里统一做兼容读取，避免直调接口时抛属性错误。
@@ -585,6 +597,8 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
     Returns:
         - subtitle_path: path to the generated subtitle file
     """
+    from app.services import subtitle, voice
+
     logger.info("\n\n## generating subtitle")
     if not params.subtitle_enabled:
         return ""
@@ -652,6 +666,8 @@ def get_video_materials(
     audio_duration,
     loomloom_video_request: loomloom.LoomLoomConfirmedVideoRequest | None = None,
 ):
+    from app.services import material, video
+
     if params.video_source == "local":
         logger.info("\n\n## preprocess local materials")
         materials = video.preprocess_video(
@@ -883,6 +899,8 @@ def _get_material_source_groups(task_id: str, video_paths: list[str]) -> dict[st
 def generate_final_videos(
     task_id, params, downloaded_videos, audio_file, subtitle_path, audio_duration
 ):
+    from app.services import video
+
     final_video_paths = []
     combined_video_paths = []
     warnings = []
@@ -1156,6 +1174,8 @@ def _run_cross_post(
     youtube_made_for_kids: bool = False,
 ) -> None:
     """后台执行跨平台发布，并只补充发布相关的任务字段。"""
+    from app.services import llm
+
     results = []
     try:
         state_updated = _patch_cross_post_state(
@@ -1434,17 +1454,19 @@ def _run_pipeline(
     if (
         stop_at in {"materials", "video"}
         and params.video_source == "openai_image"
-        and not material.is_openai_image_enabled(
-            config.snapshot_config_with_pending(config.app)
-        )
     ):
-        return _mark_task_failed(
-            task_id,
-            "preflight",
-            "OpenAI image source requires openai_image_base_url and "
-            "openai_image_model in config.toml (openai_image_api_keys is "
-            "optional for local gateways that need no auth)",
-        )
+        from app.services import material
+
+        if not material.is_openai_image_enabled(
+            config.snapshot_config_with_pending(config.app)
+        ):
+            return _mark_task_failed(
+                task_id,
+                "preflight",
+                "OpenAI image source requires openai_image_base_url and "
+                "openai_image_model in config.toml (openai_image_api_keys is "
+                "optional for local gateways that need no auth)",
+            )
 
     # 只有完整成片流程需要视频配乐供应商。尽早阻止缺少 Key 的完整任务，避免
     # 先消耗 LLM、TTS 和素材服务额度；中间产物接口仍可独立使用。

@@ -1,5 +1,9 @@
 x-common-volumes: &common-volumes
-  - ./:/MoneyPrinterTurbo
+  - ./config.toml:/MoneyPrinterTurbo/config.toml
+  - ./storage:/MoneyPrinterTurbo/storage
+  - ./resource/fonts:/MoneyPrinterTurbo/resource/fonts
+  - ./resource/songs:/MoneyPrinterTurbo/resource/songs
+  - ./models:/MoneyPrinterTurbo/models
 
 services:
   webui:
@@ -9,10 +13,11 @@ services:
     container_name: "moneyprinterturbo-webui"
     ports:
       - "127.0.0.1:8501:8501"
-    command: [ "streamlit", "run", "./webui/Main.py", "--server.address=0.0.0.0", "--server.port=8501", "--browser.serverAddress=127.0.0.1", "--server.enableCORS=True", "--browser.gatherUsageStats=False", "--client.toolbarMode=minimal", "--logger.hideWelcomeMessage=True", "--server.showEmailPrompt=False" ]
+    command: [ "python", "-m", "uvicorn", "app.asgi:app", "--host=0.0.0.0", "--port=8501" ]
     volumes: *common-volumes
     restart: always
   api:
+    profiles: ["api"]
     build:
       context: .
       dockerfile: Dockerfile

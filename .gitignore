@@ -45,3 +45,9 @@ htmlcov/
 
 # Claude Code 订阅令牌（docker compose 自动读取），禁止提交
 .env
+
+# Browser build inputs are committed; generated output is rebuilt locally/in Docker.
+/resource/public/studio/
+/frontend/test-results/
+/frontend/playwright-report/
+/.impeccable/review/

@@ -1,3 +1,5 @@
+from importlib import import_module
+
 from fastapi import Depends, Request
 
 from app.controllers import base
@@ -10,8 +12,13 @@ from app.models.schema import (
     VideoTermsRequest,
     VideoTermsResponse,
 )
-from app.services import llm
 from app.utils import utils
+
+
+def __getattr__(name):
+    if name == "llm":
+        return import_module("app.services.llm")
+    raise AttributeError(name)
 
 # LLM 接口与视频接口共用同一鉴权规则，避免新增端点时遗漏保护。
 # api_key 为空时 verify_token 直接放行，不改变默认本地使用体验。
@@ -24,6 +31,8 @@ router = new_router(dependencies=[Depends(base.verify_token)])
     summary="Create a script for the video",
 )
 def generate_video_script(request: Request, body: VideoScriptRequest):
+    from app.services import llm
+
     video_script = llm.generate_script(
         video_subject=body.video_subject,
         language=body.video_language,
@@ -41,6 +50,8 @@ def generate_video_script(request: Request, body: VideoScriptRequest):
     summary="Generate video terms based on the video script",
 )
 def generate_video_terms(request: Request, body: VideoTermsRequest):
+    from app.services import llm
+
     video_terms = llm.generate_terms(
         video_subject=body.video_subject,
         video_script=body.video_script,
@@ -59,6 +70,8 @@ def generate_video_terms(request: Request, body: VideoTermsRequest):
 def generate_video_social_metadata(
     request: Request, body: VideoSocialMetadataRequest
 ):
+    from app.services import llm
+
     metadata = llm.generate_social_metadata(
         video_subject=body.video_subject,
         video_script=body.video_script,

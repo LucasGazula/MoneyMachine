@@ -17,17 +17,17 @@ MPT_WEBUI_HOST="${MPT_WEBUI_HOST:-127.0.0.1}"
 MPT_WEBUI_PORT="${MPT_WEBUI_PORT:-8501}"
 
 if [ -x "$CURRENT_DIR/.venv/bin/python" ]; then
-  set -- "$CURRENT_DIR/.venv/bin/python" -m streamlit
+  set -- "$CURRENT_DIR/.venv/bin/python" -m uvicorn
   find_port() { find_available_port "$CURRENT_DIR/.venv/bin/python"; }
 elif command -v uv >/dev/null 2>&1; then
-  set -- uv run streamlit
+  set -- uv run uvicorn
   find_port() { find_available_port uv run python; }
-elif command -v streamlit >/dev/null 2>&1; then
-  echo "***** Warning: using streamlit from PATH. If dependencies fail, run 'uv sync --frozen' first. *****"
-  set -- streamlit
+elif command -v python3 >/dev/null 2>&1; then
+  echo "***** Warning: using Python from PATH. If dependencies fail, run 'uv sync --frozen' first. *****"
+  set -- python3 -m uvicorn
   find_port() { find_available_port python3; }
 else
-  echo "***** Neither project Python, uv, nor streamlit was found. Please install dependencies first. *****"
+  echo "***** Neither project Python nor uv was found. Please install dependencies first. *****"
   exit 1
 fi
 
@@ -69,12 +69,9 @@ fi
 MPT_WEBUI_PORT="$SELECTED_WEBUI_PORT"
 
 echo "***** WebUI address: http://$MPT_WEBUI_HOST:$MPT_WEBUI_PORT *****"
-"$@" run "$CURRENT_DIR/webui/Main.py" \
-  --server.address="$MPT_WEBUI_HOST" \
-  --server.port="$MPT_WEBUI_PORT" \
-  --browser.serverAddress="$MPT_WEBUI_HOST" \
-  --browser.gatherUsageStats=False \
-  --client.toolbarMode=minimal \
-  --logger.hideWelcomeMessage=True \
-  --server.showEmailPrompt=False \
-  --server.enableCORS=True
+if [ ! -f "$CURRENT_DIR/resource/public/studio/index.html" ]; then
+  echo "***** Build the frontend first: cd frontend && npm ci && npm run build *****"
+  exit 1
+fi
+cd "$CURRENT_DIR" || exit 1
+exec "$@" app.asgi:app --host "$MPT_WEBUI_HOST" --port "$MPT_WEBUI_PORT"
