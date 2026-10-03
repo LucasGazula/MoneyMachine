@@ -1,16 +1,17 @@
 ---
-name: moneyprinterturbo-video
-description: Use this skill whenever the user wants to create a finished video from a topic, title, idea, prompt, or script with MoneyPrinterTurbo. This includes short-form, voice-over, educational, marketing, social-media, and stock-footage videos. Also use it when the user mentions MoneyPrinterTurbo, provides this Skill URL, asks an AI agent to install or configure MoneyPrinterTurbo, needs missing API keys identified, wants a failed generation repaired, or wants a generated MP4 located and delivered. Use this skill when the expected outcome is a final video file, not setup instructions.
+name: moneymachine-video
+description: Use this skill whenever the user wants to create a finished video from a topic, title, idea, prompt, or script with MoneyMachine. This includes short-form, voice-over, educational, marketing, social-media, and stock-footage videos. Also use it when the user mentions MoneyMachine, provides this Skill URL, asks an AI agent to install or configure MoneyMachine, needs missing API keys identified, wants a failed generation repaired, or wants a generated MP4 located and delivered. Use this skill when the expected outcome is a final video file, not setup instructions.
 compatibility: Requires an AI agent with terminal, network, filesystem, and long-running command support. Supports macOS and Windows and uses uv exclusively.
 metadata:
   author: "harry0703@hotmail.com"
   version: "1.3.2"
-  upstream: "https://github.com/harry0703/MoneyPrinterTurbo"
+  repository: "https://github.com/LucasGazula/MoneyMachine"
+  based_on: "https://github.com/harry0703/MoneyPrinterTurbo"
 ---
 
-# MoneyPrinterTurbo Video Generation
+# MoneyMachine Video Generation
 
-Fork migration note: the CLI generation workflow is unchanged. The default browser interface now uses the same FastAPI process and static Svelte assets; see `docs/studio.md`. Install the `whisper` or `azure-speech` uv extras only when the selected operation needs those optional runtimes.
+MoneyMachine studio note: the CLI generation workflow is unchanged. The default browser interface now uses the same FastAPI process and static Svelte assets; see `docs/studio.md`. Install the `whisper` or `azure-speech` uv extras only when the selected operation needs those optional runtimes.
 
 The user only needs to provide a video topic or script. Complete installation, configuration reuse, generation, waiting, and final MP4 delivery automatically. Do not stop after giving instructions or commands.
 
@@ -26,7 +27,7 @@ The user only needs to provide a video topic or script. Complete installation, c
 
 ## Defaults
 
-Unless the user requests otherwise, generate one Chinese `9:16` portrait video with Pexels footage, the default Chinese Edge TTS voice, subtitles, and background music. Install MoneyPrinterTurbo under the user's home directory.
+Unless the user requests otherwise, generate one Chinese `9:16` portrait video with Pexels footage, the default Chinese Edge TTS voice, subtitles, and background music. Install MoneyMachine under the user's home directory.
 
 ## Execution
 
@@ -39,7 +40,7 @@ This is required on Windows because some agent terminal validators remove backsl
 If the client loaded only the remote `SKILL.md`, download the helper from the official repository to a temporary directory, then use that temporary directory as the command working directory:
 
 ```text
-https://raw.githubusercontent.com/harry0703/MoneyPrinterTurbo/main/docs/skill/mpt_agent.py
+https://raw.githubusercontent.com/LucasGazula/MoneyMachine/main/docs/skill/mpt_agent.py
 ```
 
 ### 2. Run the helper
@@ -87,7 +88,7 @@ RESULT_FILE=<absolute path>/latest-result.json
 If the terminal reports `exitCode=0` but truncates the output or returns a history-file reference without `MPT_RESULT`, do not infer failure and do not inspect old logs. Read this file once:
 
 ```text
-~/MoneyPrinterTurbo/.agent-logs/moneyprinterturbo-video/latest-result.json
+~/MoneyMachine/.agent-logs/moneymachine-video/latest-result.json
 ```
 
 Treat `status=completed` as success. Return only the absolute video path and a concise description, for example:
@@ -154,7 +155,7 @@ Use background mode only if the agent platform cannot wait for a foreground proc
 ## Scope
 
 - Support macOS and Windows only.
-- Use uv and the MoneyPrinterTurbo CLI only.
+- Use uv and the MoneyMachine CLI only.
 - Do not start Docker, WebUI, or API services.
 - Do not run multiple video jobs concurrently.
 - Pass additional video requirements after `--`. Run `cli.py --help` once only when an unfamiliar option must be verified.

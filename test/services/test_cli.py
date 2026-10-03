@@ -763,7 +763,7 @@ class TestCli(unittest.TestCase):
                     )
             self.assertEqual(cm.exception.code, 2)
             self.assertIn(
-                "--video-music-prompt requires --bgm-type sonilo or elevenlabs",
+                "--video-music-prompt requires --bgm-type sonilo, elevenlabs or lyria",
                 error_output.getvalue(),
             )
 
@@ -1746,7 +1746,7 @@ class TestCli(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0)
-        self.assertIn("Generate MoneyPrinterTurbo videos", result.stdout)
+        self.assertIn("Generate MoneyMachine videos", result.stdout)
         self.assertEqual(result.stderr, "")
 
 

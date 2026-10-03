@@ -1,4 +1,4 @@
-# MoneyPrinterTurbo configuration example.
+# MoneyMachine configuration example.
 # The app copies this file to config.toml on first run. Keep API keys and other
 # credentials in config.toml; do not commit your local config.toml.
 
@@ -38,7 +38,7 @@ hide_config = false
 # independently generated script candidates. The WebUI integration is optional.
 script_generation_backend = "local"
 
-# LoomLoom Public API settings. The WebUI supports the public MoneyPrinterTurbo
+# LoomLoom Public API settings. The WebUI supports the public MoneyMachine
 # SkillBot below out of the box. Configure the key in the WebUI or a private
 # config.toml, and never commit a real key. The fixed SkillBot accepts subject,
 # requirements, and candidateIndex for each row
@@ -287,7 +287,9 @@ anthropic_model_name = ""
 # Google Gemini
 # API key: https://aistudio.google.com/app/apikey
 gemini_api_key = ""
+# Also used by Google Lyria 3.5 music and Gemini transcription (or set GEMINI_API_KEY).
 gemini_model_name = ""
+gemini_tts_model_name = "gemini-2.5-flash-preview-tts"
 
 # DeepSeek
 # API key: https://platform.deepseek.com/api_keys
@@ -386,7 +388,7 @@ ollama_model_name = ""
 # Claude Code (Claude Pro / Max / Team subscription).
 # Uses the locally installed, logged-in `claude` CLI in headless mode instead of
 # an API key, so no Anthropic API credit is needed. Requirements:
-#   - the `claude` CLI must be installed in whatever runs MoneyPrinterTurbo
+#   - the `claude` CLI must be installed in whatever runs MoneyMachine
 #   - it must be authenticated: interactively via `claude` on the host, or with
 #     a long-lived token from `claude setup-token` exported as
 #     CLAUDE_CODE_OAUTH_TOKEN (needed for Docker)
@@ -430,7 +432,7 @@ pollinations_model_name = ""
 mimo_tts_model_name = "mimo-v2.5-tts"
 mimo_tts_style_prompt = "请用自然、清晰、适合短视频旁白的语气朗读。"
 
-# Subtitle provider: "edge" or "whisper". Whisper is loaded only when selected
+# Subtitle provider: "edge", "whisper", or "gemini". Whisper is loaded only when selected
 # explicitly; Edge failures do not trigger an automatic Whisper model download.
 # Leave empty to skip generation.
 subtitle_provider = "edge"
@@ -618,7 +620,7 @@ voices = []
 [voxcpm]
 # ModelBest VoxCPM cloud TTS. Create an API Key and select a model with the
 # `speech_synthesis` capability at https://platform.modelbest.cn/console/
-# The Audio Speech API returns a streaming WAV response; MoneyPrinterTurbo
+# The Audio Speech API returns a streaming WAV response; MoneyMachine
 # converts it to its internal MP3 voiceover format automatically.
 base_url = "https://api.modelbest.cn/v1"
 api_key = ""

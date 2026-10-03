@@ -18,6 +18,7 @@ from PIL import Image, UnidentifiedImageError
 from app.config import config
 from app.models.schema import MaterialInfo, VideoAspect, VideoConcatMode
 from app.services import (
+    cancellation,
     material_cache,
     metaso_minimax,
     muapi,
@@ -883,6 +884,7 @@ def _wait_for_wavespeed_prediction(
     deadline = time.monotonic() + WAVESPEED_RUN_TIMEOUT_SECONDS
     consecutive_failures = 0
     while True:
+        cancellation.check()
         try:
             response = requests.get(
                 f"{WAVESPEED_API_BASE_URL}/predictions/{prediction_id}/result",
@@ -977,6 +979,7 @@ def _save_generated_video_with_retry(
     做有限次退避重试，重试耗尽才放弃该片段。
     """
     for attempt in range(WAVESPEED_MAX_DOWNLOAD_RETRIES + 1):
+        cancellation.check()
         try:
             saved_video_path = save_video(video_url=video_url, save_dir=save_dir)
             if saved_video_path:
@@ -1033,6 +1036,7 @@ def _get_downloaded_video_duration(video_path: str) -> float:
 
 
 def save_video(video_url: str, save_dir: str = "") -> str:
+    cancellation.check()
     if not save_dir:
         save_dir = utils.storage_dir("cache_videos")
 
@@ -1239,6 +1243,7 @@ def _openai_image_download_bytes(
     """
     failure_detail = "no download attempt was made"
     for attempt in range(1, OPENAI_IMAGE_MAX_DOWNLOAD_ATTEMPTS + 1):
+        cancellation.check()
         try:
             response = requests.get(
                 image_url,
@@ -1327,6 +1332,7 @@ def _request_openai_image(endpoint: str, payload: dict) -> tuple[bytes | None, s
 
     failure_detail = "no request attempt was made"
     for attempt in range(1, OPENAI_IMAGE_MAX_ATTEMPTS + 1):
+        cancellation.check()
         api_key = get_api_key("openai_image_api_keys") if configured_keys else ""
         headers = {}
         if api_key:
@@ -1550,6 +1556,7 @@ def _download_videos_openai_image_on_demand(
         return video_paths
 
     for search_term in search_terms:
+        cancellation.check()
         items = generate_images_openai(
             search_term=search_term,
             minimum_duration=max_clip_duration,
@@ -1808,6 +1815,7 @@ def download_videos(
     valid_video_urls = []
     found_duration = 0.0
     for search_term in search_terms:
+        cancellation.check()
         video_items = search_videos(
             search_term=search_term,
             minimum_duration=max_clip_duration,
@@ -1833,6 +1841,7 @@ def download_videos(
 
     total_duration = 0.0
     for item in valid_video_items:
+        cancellation.check()
         try:
             source_info = item.source_info if isinstance(item.source_info, dict) else {}
             logger.info(
@@ -1859,7 +1868,7 @@ def download_videos(
                     )
                 seconds = min(max_clip_duration, item.duration)
                 total_duration += seconds
-                if total_duration > audio_duration:
+                if total_duration >= audio_duration:
                     logger.info(
                         f"total duration of downloaded videos: {total_duration} seconds, skip downloading more"
                     )
@@ -1896,6 +1905,7 @@ def _download_videos_wavespeed_on_demand(
     material_sources: list[dict[str, Any]] = []
     total_duration = 0.0
     for search_term in search_terms:
+        cancellation.check()
         try:
             video_items = generate_videos_wavespeed(
                 search_term=search_term,
@@ -1994,6 +2004,7 @@ def _download_videos_seedance_on_demand(
 
     total_duration = 0.0
     for search_term in search_terms:
+        cancellation.check()
         try:
             video_items = volcengine_seedance.generate_videos(
                 search_term=search_term,
@@ -2099,6 +2110,7 @@ def _download_videos_ofox_on_demand(
 
     total_duration = 0.0
     for search_term in search_terms:
+        cancellation.check()
         try:
             video_items = ofox.generate_videos(
                 search_term=search_term,
@@ -2205,6 +2217,7 @@ def _download_videos_muapi_on_demand(
 
     total_duration = 0.0
     for search_term in search_terms:
+        cancellation.check()
         try:
             video_items = muapi.generate_videos(
                 search_term=search_term,
@@ -2332,6 +2345,7 @@ def _download_videos_metaso_minimax_on_demand(
 
     total_duration = 0.0
     for search_term in search_terms:
+        cancellation.check()
         try:
             video_items = metaso_minimax.generate_videos(
                 search_term=search_term,
@@ -2423,6 +2437,7 @@ def _download_videos_by_script_order(
     found_duration = 0.0
 
     for search_term in search_terms:
+        cancellation.check()
         video_items = search_videos(
             search_term=search_term,
             minimum_duration=max_clip_duration,
@@ -2450,9 +2465,10 @@ def _download_videos_by_script_order(
     material_sources: list[dict[str, Any]] = []
     total_duration = 0.0
     candidate_index = 0
-    while candidate_groups and total_duration <= audio_duration:
+    while candidate_groups and total_duration < audio_duration:
         has_candidate = False
         for search_term, term_items in candidate_groups:
+            cancellation.check()
             if candidate_index >= len(term_items):
                 continue
 
@@ -2484,7 +2500,7 @@ def _download_videos_by_script_order(
                             f"detail={source_error}"
                         )
                     total_duration += min(max_clip_duration, item.duration)
-                    if total_duration > audio_duration:
+                    if total_duration >= audio_duration:
                         logger.info(
                             f"total duration of downloaded videos: {total_duration} seconds, skip downloading more"
                         )

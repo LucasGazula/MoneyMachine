@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Field from './Field.svelte';
-  import { api, download, mediaLabels, speechLabels, musicLabels, type Data, type Translate } from './api';
+  import { api, download, mediaLabels, speechLabels, musicLabels, geminiTtsModels, type Data, type Translate } from './api';
   export let t: Translate;
   export let providers: Data[];
   export let sources: string[];
@@ -96,7 +96,7 @@
   }
   async function backup() {
     if (!confirm(t('This file contains credentials. Store it privately. Continue?'))) return;
-    try { download('moneyprinterturbo-keys.json', await api('/keys/export')); } catch (e) { error = String(e); }
+    try { download('moneymachine-keys.json', await api('/keys/export')); } catch (e) { error = String(e); }
   }
   async function importKeys(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
@@ -113,6 +113,8 @@
       : [{section:speechSection, prefix:'', fields:keys(speechSection).filter(key => !key.startsWith('music_'))}]
     : category === 'music' && musicProvider === 'sonilo' ? [{section:'app',prefix:'sonilo_',fields:keys('app','sonilo_')}]
     : category === 'music' && musicProvider === 'elevenlabs' ? [{section:'elevenlabs',prefix:'',fields:['api_key',...keys('elevenlabs','music_')]}]
+    : category === 'music' && musicProvider === 'lyria' ? [{section:'app',prefix:'gemini_',fields:['gemini_api_key']}]
+    : category === 'transcription' && sections.app?.subtitle_provider === 'gemini' ? [{section:'app',prefix:'gemini_',fields:['gemini_api_key']}]
     : category === 'publishing' ? [{section:'app',prefix:'upload_post_',fields:keys('app','upload_post_')}]
     : category === 'script' && sections.app?.script_generation_backend === 'loomloom' ? [{section:'app',prefix:'loomloom_',fields:keys('app','loomloom_')}]
     : [];
@@ -174,14 +176,18 @@
         {:else if category === 'speech'}
           <p class="muted">{t('Turns your script into spoken narration. This is separate from transcription and music.')}</p>
           <div role="group" on:change={() => {sections.ui.tts_server = speechProvider; change('ui','tts_server',speechProvider);}}><Field label={t('Narration Provider')} bind:value={speechProvider} choices={Object.entries(speechProviders).map(([value,label]) => ({value,label:t(speechLabels[value] || String(label))}))}/></div>
-          {#if speechProvider === 'gemini-tts'}<p class="notice">{t('Google voice uses your Gemini API key, also used by Gemini scripts. It does not replace your video or music keys.')}<br>{t('Voice model')}: <code>gemini-2.5-flash-preview-tts</code>. {t('Choose a voice and listen to a sample in the Sound stage.')}</p>
+          {#if speechProvider === 'gemini-tts'}
+            <p class="notice">{t('Google voice shares your Gemini API key with scripts, transcription and Lyria music.')} {t('Choose a voice and listen to a sample in the Sound stage.')}</p>
+            <Field label={t('Gemini TTS Model')} bind:value={sections.app.gemini_tts_model_name} choices={geminiTtsModels}/>
+            <p class="muted">{t('Gemini 3.8 models can browse the extended Google voice library. Save the model, then choose a voice in Sound.')}</p>
           {:else if speechProvider === 'azure-tts-v1'}<p>{t('Edge TTS needs no API key. It uses an online voice service, not a local model.')}</p>
           {:else if speechProvider === 'mimo-tts'}<p>{t('MiMo voice shares the MiMo script API key. Its voice model is configured separately.')}</p>
           {:else if speechProvider === 'minimax-tts'}<p>{t('MiniMax voice can use a separate key here, or reuse your MiniMax script key when empty.')}</p>{/if}
         {:else if category === 'transcription'}
           <p class="muted">{t('Turns recorded speech into subtitle text. It does not generate a voice.')}</p>
-          <Field label={t('Subtitle Provider')} bind:value={sections.app.subtitle_provider} choices={[{value:'edge',label:t('Narration timing — Edge / TTS')},{value:'whisper',label:t('Whisper — local audio transcription')},{value:'',label:t('None')}]}/>
-          <p class="notice">{t('Whisper runs locally without an API key. It is not the Google voice provider. Google voice is under Narration → Google Gemini.')}</p>
+          <Field label={t('Subtitle Provider')} bind:value={sections.app.subtitle_provider} choices={[{value:'edge',label:t('Narration timing — Edge / TTS')},{value:'whisper',label:t('Whisper — local audio transcription')},{value:'gemini',label:t('Gemini 3.5 Transcribe — online')},{value:'',label:t('None')}]}/>
+          {#if sections.app.subtitle_provider === 'gemini'}<p class="notice">{t('Gemini transcription uses your Google API key and uploads narration audio for online transcription. The same key can be used for Google voice and Lyria music.')}</p>
+          {:else}<p class="notice">{t('Whisper runs locally without an API key. It is not the Google voice provider. Google voice is under Narration → Google Gemini.')}</p>{/if}
           {#if sections.app.subtitle_provider === 'whisper'}
             <Field label={t('Whisper Model')} bind:value={sections.whisper.model_size} choices={Array.from(new Set(['tiny','base','small','medium','large-v2','large-v3','large-v3-turbo',sections.whisper.model_size]))}/>
             {@render fields('whisper',keys('whisper').filter(key => key !== 'model_size'))}
@@ -191,6 +197,7 @@
           <p class="muted">{t('Choose local background music or an AI music service. Narration voice models do not generate background music.')}</p>
           <div role="group" on:change={() => {sections.ui.bgm_type = musicProvider; change('ui','bgm_type',musicProvider);}}><Field label={t('Music Provider')} bind:value={musicProvider} choices={Object.entries(musicLabels).map(([value,label]) => ({value,label:t(label)}))}/></div>
           {#if musicProvider === 'elevenlabs'}<p class="notice">{t('ElevenLabs music shares its ElevenLabs voice API key, but uses a separate music model. Changing the music model does not change the voice model.')}</p>
+          {:else if musicProvider === 'lyria'}<p class="notice">{t('Lyria 3.5 shares your Gemini API key with Google scripts and narration. It generates music from a text prompt; when the music prompt is empty, the video subject is used.')} <a href="https://ai.google.dev/gemini-api/docs/music-generation" target="_blank" rel="noreferrer">{t('Model Documentation')}</a></p>
           {:else if !['sonilo','elevenlabs'].includes(musicProvider)}<p>{t('This music option needs no API key. Choose or upload the track in the Sound stage.')}</p>{/if}
         {:else if category === 'publishing'}
           <p class="muted">{t('Upload-Post publishes finished videos to your configured social accounts. It is not a video-generation provider.')}</p>

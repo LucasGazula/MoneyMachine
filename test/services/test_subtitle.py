@@ -12,6 +12,41 @@ from app.services import subtitle
 
 
 class TestSubtitleService(unittest.TestCase):
+    def test_gemini_writes_timed_subtitles_and_deletes_upload(self):
+        response = {
+            "status": "completed",
+            "steps": [{"type": "model_output", "content": [{
+                "type": "text", "text": "Olá mundo.", "annotations": [
+                    {"type": "word_info", "text": "Olá", "start_offset": "0.100s", "end_offset": "0.400s"},
+                    {"type": "word_info", "text": "mundo.", "start_offset": "0.500s", "end_offset": "0.900s"},
+                ],
+            }]}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "subtitle.srt"
+            with (
+                patch.object(subtitle.config, "app", {"gemini_api_key": "test-key"}),
+                patch("google.genai.Client") as client,
+                patch("requests.post") as post,
+            ):
+                client.return_value.files.upload.return_value = SimpleNamespace(
+                    name="files/test", uri="https://example.test/audio", mime_type="audio/wav"
+                )
+                post.return_value.json.return_value = response
+                text = subtitle.create_gemini("audio.wav", str(output))
+                self.assertEqual(text, "Olá mundo.")
+                self.assertIn("00:00:00,100 --> 00:00:00,900\nOlá mundo.", output.read_text())
+                self.assertEqual(output.read_text().count(" --> "), 1)
+                client.return_value.files.delete.assert_called_once_with(name="files/test")
+                subtitle.create_gemini("audio.wav", str(output), word_level=True)
+                self.assertEqual(output.read_text().count(" --> "), 2)
+                self.assertEqual(post.call_count, 2)
+                self.assertEqual(
+                    post.call_args.kwargs["json"]["generation_config"]["transcription_config"]["mode"]["timestamp_granularities"],
+                    ["word"],
+                )
+                client.return_value.interactions.create.assert_not_called()
+
     def test_file_to_subtitles_returns_empty_for_missing_input(self):
         """空路径和不存在的文件都应安全返回空列表。"""
         self.assertEqual(subtitle.file_to_subtitles(""), [])

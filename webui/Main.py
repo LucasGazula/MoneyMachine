@@ -21,7 +21,7 @@ from loguru import logger
 from streamlit_tour import Tour
 
 # WebUI 作为独立入口运行时，需要让项目根目录优先于第三方依赖，
-# 避免依赖中的同名 app 包遮蔽 MoneyPrinterTurbo 自己的 app 包。
+# 避免依赖中的同名 app 包遮蔽 MoneyMachine 自己的 app 包。
 root_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 if root_dir in sys.path:
     sys.path.remove(root_dir)
@@ -67,22 +67,22 @@ from app.utils.logging_utils import configure_terminal_logger
 from app.utils import utils
 
 st.set_page_config(
-    page_title="MoneyPrinterTurbo",
+    page_title="MoneyMachine",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="auto",
     menu_items={
-        "Report a bug": "https://github.com/harry0703/MoneyPrinterTurbo/issues",
-        "About": "# MoneyPrinterTurbo\nSimply provide a topic or keyword for a video, and it will "
+        "Report a bug": "https://github.com/LucasGazula/MoneyMachine/issues",
+        "About": "# MoneyMachine\nSimply provide a topic or keyword for a video, and it will "
         "automatically generate the video copy, video materials, video subtitles, "
         "and video background music before synthesizing a high-definition short "
-        "video.\n\nhttps://github.com/harry0703/MoneyPrinterTurbo",
+        "video.\n\nhttps://github.com/LucasGazula/MoneyMachine",
     },
 )
 
 
 # Streamlit 1.59 会在页面右上角默认展示 Deploy、skills nudge 等平台入口。
-# MoneyPrinterTurbo 是面向终端用户的本地工具，这些入口会造成顶部大块空白，
+# MoneyMachine 是面向终端用户的本地工具，这些入口会造成顶部大块空白，
 # 也会让新用户误以为需要安装额外组件。这里统一隐藏 Streamlit 平台工具栏，
 # 并压缩主容器顶部留白，只保留项目自己的标题、语言选择和业务设置区域。
 style_file = Path(__file__).with_name("styles.css")
@@ -249,10 +249,10 @@ _RUNTIME_CONFIG_SECTIONS = {
 # 避免把任务记录、config.toml 或其它 JSON 误当成本功能的导出文件。
 SETTINGS_PRESET_SCHEMA = "moneyprinterturbo.settings-preset"
 SETTINGS_PRESET_VERSION = 1
-SETTINGS_PRESET_FILE_NAME = "moneyprinterturbo-settings.json"
+SETTINGS_PRESET_FILE_NAME = "moneymachine-settings.json"
 KEY_BACKUP_SCHEMA = "moneyprinterturbo.key-backup"
 KEY_BACKUP_VERSION = 1
-KEY_BACKUP_FILE_NAME = "moneyprinterturbo-keys.json"
+KEY_BACKUP_FILE_NAME = "moneymachine-keys.json"
 # 预设只描述生成参数。素材、配音和配乐都是本机文件路径，预设通常要在另一台
 # 机器或另一个容器里导入，带上这些路径只会指向不存在的文件。
 PRESET_EXCLUDED_PARAM_KEYS = frozenset(
@@ -1669,12 +1669,12 @@ def _render_brand(available_update: str | None = None):
     st.markdown(
         f"""
         <h1 class="mpt-brand">
-            <span class="mpt-brand__name">MoneyPrinterTurbo</span>
+            <span class="mpt-brand__name">MoneyMachine</span>
             <a class="mpt-brand__version"
-               href="https://github.com/harry0703/MoneyPrinterTurbo"
+               href="https://github.com/LucasGazula/MoneyMachine"
                target="_blank"
                rel="noopener noreferrer"
-               aria-label="Open MoneyPrinterTurbo on GitHub"
+               aria-label="Open MoneyMachine on GitHub"
                title="Open project on GitHub">v{html.escape(str(config.project_version))}</a>
             {update_link}
         </h1>
@@ -4527,7 +4527,7 @@ def _loomloom_script_signature(
 
 
 def _render_local_script_generation(params):
-    """保留 MoneyPrinterTurbo 原有的本地 LLM 脚本生成路径。"""
+    """保留 MoneyMachine 原有的本地 LLM 脚本生成路径。"""
     if not st.button(
         tr("Generate Video Script and Keywords"),
         key="auto_generate_script",

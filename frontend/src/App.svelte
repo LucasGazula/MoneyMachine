@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import Field from './Field.svelte';
   import TaskPanel from './TaskPanel.svelte';
-  import { api, download, upload, durationEstimate, mediaLabels, speechLabels, musicLabels, type Data } from './api';
+  import { api, download, upload, durationEstimate, mediaLabels, speechLabels, musicLabels, geminiTtsModels, type Data } from './api';
   let boot: Data | null = null;
   let params: Data = {};
   let loading = true;
@@ -18,10 +18,20 @@
   let translations: Data = {};
   let catalog: Data | null = null;
   let catalogLoading = false;
+  let captionPreviewFont = '';
+  let captionFontError = '';
+  const captionFontLoads = new Map<string, Promise<void>>();
   let voiceProvider = 'azure-tts-v1';
   let voiceMode = 'tts';
   let voiceList: string[] = [];
+  let voiceDetails: Record<string, Data> = {};
   let voiceFilter = '';
+  let voiceGender = '';
+  let voiceCategory = '';
+  let voiceLocale = localStorage.getItem('mpt-gemini-voice-locale') || 'pt-BR';
+  let voiceLocales: string[] = [];
+  let geminiVoiceModel = '';
+  let selectedGeminiVoiceModel = '';
   let voicesLoading = false;
   let loadedVoiceProvider = '';
   let voiceError = '';
@@ -63,7 +73,24 @@
   let scriptRunId = sessionStorage.getItem('mpt-script-run') || '';
   let scriptPolling = false;
   let timer: ReturnType<typeof setInterval>;
-  const voiceCache = new Map<string, string[]>();
+  const voiceCache = new Map<string, Data>();
+  const filterVoices = (voices: string[], details: Record<string, Data>, gender: string, category: string, search: string) => voices.filter(value => {
+    const info = details[value] || {};
+    return (!gender || info.gender === gender) && (!category || String(info.context || '').split(' | ').includes(category))
+      && `${value} ${info.persona || ''} ${info.description || ''}`.toLowerCase().includes(search.toLowerCase());
+  });
+  const voiceLabel = (value: string) => voiceDetails[value]
+    ? `${value.split(' | ')[1] || voiceDetails[value].display_name}${voiceDetails[value].gender ? ` · ${t(String(voiceDetails[value].gender).replace(/^./, letter => letter.toUpperCase()))}` : ''}`
+    : value;
+  function selectVisibleVoice() {
+    const matching = filterVoices(voiceList, voiceDetails, voiceGender, voiceCategory, voiceFilter);
+    if (!matching.includes(params.voice_name)) { params.voice_name = matching[0] || ''; preview = null; }
+  }
+  const voiceLocaleLabel = (code: string) => `${new Intl.DisplayNames([language === 'pt' ? 'pt-BR' : 'en-US'], {type:'language'}).of(code)} (${code})`;
+  const voiceProviderForName = (name: string) => {
+    const prefix = String(name || '').split(':')[0];
+    return ({siliconflow: 'siliconflow', gemini: 'gemini-tts', mimo: 'mimo-tts', minimax: 'minimax-tts', elevenlabs: 'elevenlabs', chatterbox: 'chatterbox', kokoro: 'kokoro', fish_audio: 'fish_audio', voxcpm: 'voxcpm'} as Data)[prefix] || (String(name).includes('V2') ? 'azure-tts-v2' : 'azure-tts-v1');
+  };
   const pt: Data = {
     'Script AI': 'IA de roteiro', 'Video & Images': 'Vídeo e imagens', 'Narration': 'Narração',
     'Transcription & Subtitles': 'Transcrição e legendas', 'Provider Categories': 'Funções dos provedores',
@@ -73,6 +100,7 @@
     'Configure Narration AI': 'Configurar IA de narração', 'Configure Music AI': 'Configurar IA de música',
     'Back to Editor': 'Voltar ao editor', 'API Address': 'Endereço da API', 'API Keys': 'Chaves de API',
     'Voice model': 'Modelo de voz', 'Voice ID': 'ID da voz', 'Voice IDs': 'IDs das vozes',
+    'Your last selected voice is saved automatically.': 'A última voz selecionada é salva automaticamente.',
     'Video Model': 'Modelo de vídeo', 'Video Endpoint': 'Rota de geração de vídeo', 'Music Model': 'Modelo de música',
     'Service Region': 'Região do serviço', 'Resolution': 'Resolução', 'Whisper Model': 'Modelo Whisper',
     'Device': 'Dispositivo', 'Compute Type': 'Tipo de cálculo', 'Subtitle Provider': 'Modo de transcrição e legendas',
@@ -84,17 +112,24 @@
     'Local media needs no API key. Upload your images or videos in the Footage stage.': 'Arquivos locais não precisam de chave. Envie suas imagens ou vídeos na etapa Mídia.',
     'Turns your script into spoken narration. This is separate from transcription and music.': 'Transforma o roteiro em voz. É uma função diferente de transcrever áudio ou gerar música.',
     'Google voice uses your Gemini API key, also used by Gemini scripts. It does not replace your video or music keys.': 'A voz do Google usa a chave Gemini, compartilhada com roteiros Gemini. Ela não substitui as chaves de vídeo ou música.',
+    'Google voice shares your Gemini API key with scripts, transcription and Lyria music.': 'A voz Google compartilha sua chave Gemini com roteiros, transcrição e música Lyria.',
     'Choose a voice and listen to a sample in the Sound stage.': 'Escolha a voz e ouça uma amostra na etapa Áudio.',
+    'Choose a voice for the selected narration provider in Sound.': 'Escolha uma voz do provedor de narração selecionado na etapa Áudio.',
     'Edge TTS needs no API key. It uses an online voice service, not a local model.': 'Edge TTS não precisa de chave. Usa um serviço de voz online, não um modelo local.',
     'MiMo voice shares the MiMo script API key. Its voice model is configured separately.': 'A voz MiMo compartilha a chave dos roteiros MiMo. O modelo de voz é configurado separadamente.',
     'MiniMax voice can use a separate key here, or reuse your MiniMax script key when empty.': 'A voz MiniMax pode usar uma chave própria aqui. Se ficar vazia, usa a chave dos roteiros MiniMax.',
     'Turns recorded speech into subtitle text. It does not generate a voice.': 'Transforma a fala de um áudio em texto para legendas. Não gera voz.',
     'Narration timing — Edge / TTS': 'Tempos da narração — Edge / TTS', 'Whisper — local audio transcription': 'Whisper — transcrição local de áudio',
+    'Gemini 3.5 Transcribe — online': 'Gemini 3.5 Transcribe — transcrição online',
+    'Gemini transcription uses your Google API key and uploads narration audio for online transcription. The same key can be used for Google voice and Lyria music.': 'A transcrição Gemini usa sua chave de API Google e envia o áudio da narração para transcrição online. A mesma chave pode ser usada para voz Google e música Lyria.',
     'Whisper runs locally without an API key. It is not the Google voice provider. Google voice is under Narration → Google Gemini.': 'Whisper roda localmente, sem chave de API. Não é o gerador de voz do Google. A voz do Google fica em Narração → Google Gemini.',
+    'Gemini TTS Model': 'Modelo de voz Gemini',
+    'Gemini 3.8 models can browse the extended Google voice library. Save the model, then choose a voice in Sound.': 'Os modelos Gemini 3.8 podem consultar a biblioteca ampliada de vozes do Google. Salve o modelo e escolha uma voz na etapa Áudio.',
     'Install Whisper support with': 'Instale o suporte Whisper com',
     'The model downloads on first transcription. Restart the server after changing a model that was already loaded.': 'O modelo é baixado na primeira transcrição. Reinicie o servidor após trocar um modelo que já foi carregado.',
     'Choose local background music or an AI music service. Narration voice models do not generate background music.': 'Escolha música local ou um serviço de música por IA. Modelos de narração não geram música de fundo.',
     'ElevenLabs music shares its ElevenLabs voice API key, but uses a separate music model. Changing the music model does not change the voice model.': 'Música e voz ElevenLabs compartilham a chave, mas usam modelos diferentes. Alterar o modelo de música não altera o de voz.',
+    'Lyria 3.5 shares your Gemini API key with Google scripts and narration. It generates music from a text prompt; when the music prompt is empty, the video subject is used.': 'Lyria 3.5 compartilha a chave Gemini com roteiros e narração do Google. Gera música a partir de um texto; se o campo estiver vazio, usa o tema do vídeo.',
     'This music option needs no API key. Choose or upload the track in the Sound stage.': 'Esta opção não precisa de chave. Escolha ou envie a faixa na etapa Áudio.',
     'Upload-Post publishes finished videos to your configured social accounts. It is not a video-generation provider.': 'Upload-Post publica os vídeos prontos nas suas contas. Não é um gerador de vídeos.',
     'Technical settings, server access and all original configuration fields. You do not need these to configure normal providers.': 'Configuração técnica, acesso ao servidor e todos os campos originais. Não é necessário entrar aqui para cadastrar os provedores.',
@@ -108,6 +143,7 @@
     'Google Gemini — text to speech': 'Google Gemini — gerar voz', 'No music': 'Sem música',
     'Random local music — no API': 'Música local aleatória — sem API', 'Built-in music — no API': 'Biblioteca de músicas — sem API',
     'Uploaded music — no API': 'Música enviada — sem API', 'Sonilo — AI music': 'Sonilo — música por IA', 'ElevenLabs — AI music': 'ElevenLabs — música por IA',
+    'Google Lyria 3.5 — AI music': 'Google Lyria 3.5 — música por IA',
     'Start with an idea. Shape the story before choosing the footage.': 'Comece por uma ideia. Acerte o roteiro antes de escolher a mídia.',
     'Choose where your images come from and how they fill the screen.': 'Escolha de onde vem a mídia e como ela ocupa a tela.',
     'Listen before rendering. Keep narration, music and cloning controls together.': 'Ouça antes de renderizar. Ajuste narração, música e clonagem de voz.',
@@ -126,9 +162,10 @@
     'One scene per line. Maximum five scenes. Exact scene prompts are included in the quote.': 'Uma cena por linha, até cinco cenas. O preço consultado corresponde a estas descrições.',
     'clips needed; shorter footage repeats.': 'clipes necessários; mídia mais curta será repetida.',
     'Your story, clearly told.': 'Sua história, contada com clareza.',
-    'Layout preview only; final font rendering and animation are applied by the video engine.': 'Prévia de layout. A fonte e a animação finais são aplicadas pelo renderizador.',
+    'The preview uses the selected font; final placement and animation are applied by the video engine.': 'A prévia usa a fonte selecionada; posição final e animação são aplicadas pelo renderizador.',
+    'This font could not be shown in the browser.': 'Esta fonte não pôde ser exibida no navegador.',
     'Preview requests use the selected provider. A matching full preview is reused during generation.': 'A prévia usa o provedor selecionado. A narração completa compatível será reutilizada na geração.',
-    'Use Whisper subtitles for uploaded narration; the model loads only when transcription is requested.': 'Use Whisper para legendar áudio enviado. O modelo só carrega quando a transcrição é solicitada.',
+    'Choose Whisper or Gemini transcription in settings to subtitle uploaded narration.': 'Escolha a transcrição Whisper ou Gemini nas configurações para legendar a narração enviada.',
     'Private reference audio expires after 30 minutes and is never stored in task history.': 'O áudio privado expira em 30 minutos e não é salvo no histórico.',
     'Uploaded narration and private reference audio must be uploaded again.': 'Envie novamente a narração e os áudios de referência privados.',
     'Settings will be saved after the active task.': 'As configurações serão salvas após a tarefa ativa.',
@@ -154,6 +191,10 @@
     'Script': 'Roteiro', 'Footage': 'Mídia', 'Sound': 'Áudio', 'Subtitles': 'Legendas', 'Output': 'Resultado',
     'Video Subject': 'Tema do vídeo', 'Video Script': 'Roteiro do vídeo', 'Generate Script': 'Gerar roteiro',
     'Generate Video': 'Gerar vídeo', 'Generating': 'Gerando', 'Failed': 'Falhou', 'Complete': 'Concluído', 'Waiting': 'Aguardando',
+    'Stop Generation': 'Parar geração', 'Cancelling': 'Cancelando…', 'Cancelled': 'Cancelado',
+    'Are you sure you want to cancel this video generation? Completed files will be kept. Provider requests already submitted may still be charged.': 'Tem certeza de que deseja cancelar a geração deste vídeo? Os arquivos concluídos serão mantidos. Solicitações já enviadas a provedores podem ser cobradas.',
+    'Stopping generation. Waiting for any provider request already in progress to finish.': 'Parando a geração. Aguardando a conclusão de uma eventual solicitação já enviada ao provedor.',
+    'Generation cancelled. Completed files were kept.': 'Geração cancelada. Os arquivos concluídos foram mantidos.',
     'Language': 'Idioma', 'Theme': 'Tema', 'Light': 'Claro', 'Dark': 'Escuro', 'System': 'Sistema',
     'Refresh': 'Atualizar', 'Save Settings': 'Salvar configurações', 'Save Defaults': 'Salvar preferências',
     'Video Source': 'Fonte de mídia', 'Video Aspect': 'Formato do vídeo', 'Video Fit Mode': 'Enquadramento',
@@ -161,6 +202,14 @@
     'Video Concat Mode': 'Ordem dos clipes', 'Video Transition Mode': 'Transição',
     'Match Materials to Script': 'Seguir a ordem do roteiro', 'Search Terms': 'Termos de busca', 'Generate Terms': 'Gerar termos',
     'Voice Mode': 'Modo de narração', 'Voice Provider': 'Provedor de voz', 'Voice': 'Voz',
+    'Voice Language / Region': 'Idioma e região da voz', 'All languages / regions': 'Todos os idiomas e regiões',
+    'Voice Gender': 'Gênero da voz', 'Voice Category': 'Categoria da voz', 'All genders': 'Todos os gêneros',
+    'Female': 'Feminina', 'Male': 'Masculina', 'Neutral': 'Neutra', 'All categories': 'Todas as categorias',
+    'No voices match these filters.': 'Nenhuma voz corresponde a esses filtros.',
+    'Enterprise Agent': 'Atendimento', 'Content & Media': 'Conteúdo e mídia', 'Conversational / Edu': 'Conversação e educação',
+    'Growth & Marketing': 'Marketing', 'Wellness & Culture': 'Bem-estar e cultura', 'Entertainment & Gaming': 'Entretenimento e jogos',
+    'Gemini 2.5 offers 30 multilingual voices. Gemini 3.8 adds regional voices.': 'O Gemini 2.5 oferece 30 vozes multilíngues. O Gemini 3.8 inclui vozes regionais.',
+    'voices available in this selection': 'vozes disponíveis nesta seleção',
     'Voice Volume': 'Volume da voz', 'Voice Rate': 'Velocidade da voz', 'Sample Text': 'Texto de teste',
     'Preview Voice': 'Ouvir amostra', 'Preview Full Narration': 'Prévia da narração completa', 'Upload Narration': 'Enviar narração',
     'Background Music': 'Música de fundo', 'Music Volume': 'Volume da música', 'Music Prompt': 'Descrição da música',
@@ -220,6 +269,8 @@
     try {
       boot = await api('/bootstrap'); params = structuredClone(boot!.defaults);
       language = boot!.ui.language || 'pt'; voiceProvider = boot!.ui.tts_server || 'azure-tts-v1';
+      if (!localStorage.getItem('mpt-gemini-voice-locale')) voiceLocale = language === 'pt' ? 'pt-BR' : 'en-US';
+      if (voiceProvider === 'gemini-tts' && typeof boot!.ui.gemini_voice_locale === 'string') voiceLocale = boot!.ui.gemini_voice_locale;
       voiceMode = boot!.ui.voice_mode || (params.voice_name === 'no-voice' ? 'none' : 'tts');
       candidateCount = boot!.ui.loomloom_candidate_count || 3;
       scriptDuration = boot!.ui.loomloom_script_duration_seconds || 60;
@@ -251,28 +302,73 @@
   $: paidSource = ['wavespeed','volcengine_seedance','ofox','metaso_minimax','muapi'].includes(params.video_source);
   $: paidSignature = JSON.stringify([params.video_source,params.video_subject,params.video_script,params.video_terms,params.video_count,params.video_clip_duration,params.video_aspect]);
   $: if (paidSignature !== paidApprovedSignature) paidConfirmed = false;
-  $: generationBlocked = !!busy || (!params.video_subject?.trim() && !params.video_script?.trim()) || (paidSource && !paidConfirmed) || (params.video_source === 'loomloom' && (quoteKind !== 'video' || quoteChanged || !chargeConfirmed));
+  $: voiceMatchesProvider = voiceMode !== 'tts' || (!!params.voice_name && voiceProviderForName(params.voice_name) === voiceProvider);
+  $: voiceCategories = Array.from(new Set(Object.values(voiceDetails).flatMap(info => String(info.context || '').split(' | ').filter(Boolean)))).sort();
+  $: visibleVoices = filterVoices(voiceList, voiceDetails, voiceGender, voiceCategory, voiceFilter);
+  $: generationBlocked = !!busy || !voiceMatchesProvider || (!params.video_subject?.trim() && !params.video_script?.trim()) || (paidSource && !paidConfirmed) || (params.video_source === 'loomloom' && (quoteKind !== 'video' || quoteChanged || !chargeConfirmed));
   $: if (boot && ['footage', 'sound', 'subtitles'].includes(stage)) void loadCatalog();
-  $: if (boot && stage === 'sound' && voiceMode === 'tts') void loadVoices(voiceProvider);
+  $: if (stage === 'subtitles' && params.font_name) void loadCaptionFont(params.font_name);
+  $: if (boot && stage === 'sound' && voiceMode === 'tts' && voiceLocale !== undefined) void loadVoices(voiceProvider, false, voiceLocale);
   $: filteredHistory = history.filter(entry => `${entry.subject} ${entry.task_id}`.toLowerCase().includes(historySearch.toLowerCase()) && (historyFilter === 'all' || String(entry.state) === historyFilter));
   async function loadCatalog(force = false) {
     if ((catalog && !force) || catalogLoading) return;
     catalogLoading = true;
     try { catalog = await api('/catalog'); } catch (e) { error = String(e); } finally { catalogLoading = false; }
   }
-  async function loadVoices(provider: string, force = false) {
-    if (voicesLoading || (loadedVoiceProvider === provider && !force)) return;
+  async function loadCaptionFont(name: string) {
+    if (captionPreviewFont === name) return;
+    captionPreviewFont = ''; captionFontError = '';
+    try {
+      let pending = captionFontLoads.get(name);
+      if (!pending) {
+        const face = new FontFace(name, `url("/api/v1/studio/fonts/${encodeURIComponent(name)}")`);
+        pending = face.load().then(loaded => { document.fonts.add(loaded); });
+        captionFontLoads.set(name, pending);
+      }
+      await pending;
+      if (params.font_name === name) captionPreviewFont = name;
+    } catch {
+      captionFontLoads.delete(name);
+      if (params.font_name === name) captionFontError = t('This font could not be shown in the browser.');
+    }
+  }
+  async function loadVoices(provider: string, force = false, locale = voiceLocale) {
+    const key = provider === 'gemini-tts' ? `${provider}:${locale}` : provider;
+    if (voicesLoading || (loadedVoiceProvider === key && !force)) return;
     voicesLoading = true; voiceError = '';
     try {
-      let entries = !force && voiceCache.has(provider) ? voiceCache.get(provider)! : (await api(`/voices?provider=${encodeURIComponent(provider)}`)).voices;
-      voiceCache.set(provider, entries);
-      if (voiceProvider === provider) {
+      const query = `/voices?provider=${encodeURIComponent(provider)}${provider === 'gemini-tts' ? `&language_code=${encodeURIComponent(locale)}${force ? '&refresh=true' : ''}` : ''}`;
+      const result = !force && voiceCache.has(key) ? voiceCache.get(key)! : await api(query);
+      voiceCache.set(key, result);
+      let entries: string[] = result.voices;
+      if (voiceProvider === provider && (provider !== 'gemini-tts' || voiceLocale === locale)) {
+        voiceLocales = provider === 'gemini-tts' ? result.locales || [] : [];
+        geminiVoiceModel = provider === 'gemini-tts' ? result.model || '' : '';
+        selectedGeminiVoiceModel = geminiVoiceModel;
+        voiceDetails = provider === 'gemini-tts' ? result.voice_details || {} : {};
         if (provider === 'minimax-tts' && params.voice_name?.startsWith('minimax:') && !entries.includes(params.voice_name)) entries = [params.voice_name,...entries];
-        voiceList = entries; loadedVoiceProvider = provider;
-        if (!entries.includes(params.voice_name) && entries.length) params.voice_name = entries.find((v: string) => v.startsWith('pt-BR')) || entries[0];
+        voiceList = entries; loadedVoiceProvider = key;
+        if (!entries.includes(params.voice_name)) { params.voice_name = entries.find((v: string) => v.startsWith('pt-BR')) || entries[0] || ''; preview = null; }
       }
-    } catch (e) { voiceError = String(e); loadedVoiceProvider = provider; voiceList = []; }
-    finally { voicesLoading = false; if (voiceProvider !== provider && stage === 'sound' && voiceMode === 'tts') void loadVoices(voiceProvider); }
+    } catch (e) { if (voiceProvider === provider && (provider !== 'gemini-tts' || voiceLocale === locale)) { voiceError = String(e); loadedVoiceProvider = key; voiceList = []; voiceDetails = {}; if (provider === 'gemini-tts') params.voice_name = ''; } }
+    finally { voicesLoading = false; if ((voiceProvider !== provider || (provider === 'gemini-tts' && voiceLocale !== locale)) && stage === 'sound' && voiceMode === 'tts') void loadVoices(voiceProvider); }
+  }
+  async function changeGeminiVoiceModel() {
+    const selected = selectedGeminiVoiceModel;
+    if (selected === geminiVoiceModel) return;
+    busy = 'voice-model'; voiceError = ''; notice = '';
+    try {
+      const result = await api('/settings', {app:{gemini_tts_model_name:selected}}, 'PATCH');
+      if (result.pending) {
+        selectedGeminiVoiceModel = geminiVoiceModel;
+        notice = t('Settings will be saved after the active task.');
+        return;
+      }
+      geminiVoiceModel = selected;
+      voiceCache.clear(); loadedVoiceProvider = ''; voiceFilter = ''; voiceGender = ''; voiceCategory = ''; preview = null;
+      await loadVoices('gemini-tts');
+    } catch (e) { selectedGeminiVoiceModel = geminiVoiceModel; voiceError = String(e); }
+    finally { busy = ''; }
   }
   async function navigate(target: string, category = 'script') {
     if (target === 'settings') settingsCategory = category;
@@ -281,6 +377,7 @@
     if (target === 'history') await run('history', async () => { history = (await api(`/tasks?limit=${historyLimit}`)).tasks; });
   }
   function requestPayload(): Data {
+    if (!voiceMatchesProvider) throw new Error(t('Choose a voice for the selected narration provider in Sound.'));
     const value = structuredClone(params);
     value.video_terms = typeof value.video_terms === 'string' ? value.video_terms.split(',').map((s: string) => s.trim()).filter(Boolean) : value.video_terms;
     value.video_materials = value.video_source === 'local' ? materials.map(m => ({provider: 'local', url: m.id})) : null;
@@ -292,6 +389,7 @@
   async function generate() {
     await run('generate', async () => {
       if (voiceMode === 'upload' && !narration) throw new Error(t('Upload Narration'));
+      await rememberVoice();
       const result = await api('/generate', requestPayload()); activeId = result.task_id;
       sessionStorage.setItem('mpt-active-task', activeId); await refreshTask();
     });
@@ -317,6 +415,7 @@
   }
   async function audition(full = false) {
     await run('preview', async () => {
+      await rememberVoice();
       const text = full ? params.video_script : sampleText || params.video_script?.slice(0, 160) || (language === 'pt' ? 'Olá! Esta é uma amostra da narração do seu vídeo.' : 'Hello! This is a sample of your video narration.');
       const signature = narrationSignature;
       preview = await api('/previews', {...requestPayload(), text, full});
@@ -345,8 +444,7 @@
     if (params.custom_audio_file) notice = t('Uploaded narration and private reference audio must be uploaded again.');
     params.custom_audio_file = null; narration = null; reference = null; prompt = null; preview = null;
     voiceMode = hadNarration ? 'upload' : params.voice_name === 'no-voice' ? 'none' : 'tts'; view = 'editor';
-    const prefix = String(params.voice_name || '').split(':')[0];
-    voiceProvider = ({siliconflow: 'siliconflow', gemini: 'gemini-tts', mimo: 'mimo-tts', minimax: 'minimax-tts', elevenlabs: 'elevenlabs', chatterbox: 'chatterbox', kokoro: 'kokoro', fish_audio: 'fish_audio', voxcpm: 'voxcpm'} as Data)[prefix] || (String(params.voice_name).includes('V2') ? 'azure-tts-v2' : 'azure-tts-v1');
+    voiceProvider = voiceProviderForName(params.voice_name);
   }
   async function selectTask(id: string) { activeId = id; sessionStorage.setItem('mpt-active-task', id); await run('task', refreshTask); view = 'editor'; }
   async function deleteTask(id: string) {
@@ -358,6 +456,12 @@
       const saved = structuredClone(params); delete saved.video_materials; delete saved.custom_audio_file; delete saved.bgm_file;
       await api('/settings', {app: {script_generation_backend: scriptBackend}, ui: {...saved, language, theme, voice_mode: voiceMode, tts_server: voiceProvider, loomloom_candidate_count: candidateCount, loomloom_script_duration_seconds: scriptDuration}}, 'PATCH'); notice = t('Settings saved.');
     });
+  }
+  async function rememberVoice() {
+    if (voiceMode !== 'tts' || !voiceMatchesProvider) return;
+    try {
+      await api('/settings', {ui:{voice_name:params.voice_name, tts_server:voiceProvider, voice_mode:'tts', gemini_voice_locale:voiceLocale}}, 'PATCH');
+    } catch (e) { voiceError = String(e); }
   }
   async function presetImport(event: Event) {
     const input = event.currentTarget as HTMLInputElement; const file = input.files?.[0];
@@ -386,7 +490,7 @@
     finally { scriptPolling = false; }
   }
   async function settingsSaved(changes: Data = {}) {
-    voiceCache.clear(); loadedVoiceProvider = ''; preview = null; quote = null; chargeConfirmed = false; paidConfirmed = false;
+    voiceCache.clear(); loadedVoiceProvider = ''; voiceLocales = []; voiceDetails = {}; geminiVoiceModel = ''; selectedGeminiVoiceModel = ''; preview = null; quote = null; chargeConfirmed = false; paidConfirmed = false;
     if (changes.ui?.video_source !== undefined) params.video_source = changes.ui.video_source;
     if (changes.ui?.tts_server !== undefined) voiceProvider = changes.ui.tts_server;
     if (changes.ui?.bgm_type !== undefined) params.bgm_type = changes.ui.bgm_type;
@@ -403,11 +507,11 @@
   }
 </script>
 
-<svelte:head><title>MoneyPrinterTurbo — {t(view === 'editor' ? 'Studio' : view === 'history' ? 'History' : view === 'settings' ? 'Settings' : 'Help')}</title></svelte:head>
+<svelte:head><title>MoneyMachine — {t(view === 'editor' ? 'Studio' : view === 'history' ? 'History' : view === 'settings' ? 'Settings' : 'Help')}</title></svelte:head>
 
 <a class="skip-link" href="#main">{t('Skip to content')}</a>
 <header class="app-bar">
-  <a href="/" class="brand" on:click|preventDefault={() => navigate('editor')}><svg aria-hidden="true" width="27" height="27" viewBox="0 0 28 28" fill="none"><path d="M4 6h20v16H4zM10 6v16M18 6v16" stroke="currentColor" stroke-width="1.5"/><path d="m12 10 5 4-5 4z" fill="currentColor"/></svg><span>MoneyPrinterTurbo<small>{t('Studio')}</small></span></a>
+  <a href="/" class="brand" on:click|preventDefault={() => navigate('editor')}><svg aria-hidden="true" width="27" height="27" viewBox="0 0 28 28" fill="none"><path d="M4 6h20v16H4zM10 6v16M18 6v16" stroke="currentColor" stroke-width="1.5"/><path d="m12 10 5 4-5 4z" fill="currentColor"/></svg><span>MoneyMachine<small>{t('Studio')}</small></span></a>
   {#if boot}<nav class="app-nav" aria-label={t('Main Navigation')}>{#each ['editor', 'history', 'settings', 'help'] as target}<button class:current={view === target} aria-current={view === target ? 'page' : undefined} on:click={() => navigate(target)}>{t(target[0].toUpperCase() + target.slice(1))}</button>{/each}</nav>{/if}
   <div class="preferences"><label><span class="sr-only">{t('Language')}</span><select aria-label={t('Language')} bind:value={language} on:change={() => run('language', changeLanguage)}>{#each boot?.locales || ['pt', 'en'] as lang}<option value={lang}>{lang.toUpperCase()}</option>{/each}</select></label><label><span class="sr-only">{t('Theme')}</span><select aria-label={t('Theme')} bind:value={theme}><option value="light">{t('Light')}</option><option value="dark">{t('Dark')}</option><option value="system">{t('System')}</option></select></label></div>
 </header>
@@ -426,7 +530,7 @@
           {#each [['script', 'Script'], ['footage', 'Footage'], ['sound', 'Sound'], ['subtitles', 'Subtitles']] as [key, label], index}
             <button class:current={stage === key} aria-current={stage === key ? 'step' : undefined} on:click={() => stage = key}><span class="stage-number">{index + 1}</span>{t(label)}</button>
           {/each}
-          <div class="rail-tools"><button class="quiet" on:click={() => run('preset', async () => download('moneyprinterturbo-preset.json', await api('/presets/export', params)))}>{t('Export Preset')}</button><label class="button quiet">{t('Import Preset')}<input class="file-picker" type="file" accept=".json,application/json" on:change={presetImport}></label><button class="quiet" on:click={saveDefaults} disabled={!!busy}>{t('Save Defaults')}</button><button class="quiet" on:click={() => { params = structuredClone(boot!.defaults); materials = []; preview = null; narration = null; reference = null; prompt = null; scenePrompts = ''; quote = null; chargeConfirmed = false; }} >{t('New Project')}</button></div>
+          <div class="rail-tools"><button class="quiet" on:click={() => run('preset', async () => download('moneymachine-preset.json', await api('/presets/export', params)))}>{t('Export Preset')}</button><label class="button quiet">{t('Import Preset')}<input class="file-picker" type="file" accept=".json,application/json" on:change={presetImport}></label><button class="quiet" on:click={saveDefaults} disabled={!!busy}>{t('Save Defaults')}</button><button class="quiet" on:click={() => { params = structuredClone(boot!.defaults); materials = []; preview = null; narration = null; reference = null; prompt = null; scenePrompts = ''; quote = null; chargeConfirmed = false; }} >{t('New Project')}</button></div>
         </nav>
         <section class="editor" aria-labelledby="stage-title">
           <div class="workspace-heading"><div><h1 id="stage-title">{t(stage === 'script' ? 'Script' : stage === 'footage' ? 'Footage' : stage === 'sound' ? 'Sound' : 'Subtitles')}</h1><p>{t(stage === 'script' ? 'Start with an idea. Shape the story before choosing the footage.' : stage === 'footage' ? 'Choose where your images come from and how they fill the screen.' : stage === 'sound' ? 'Listen before rendering. Keep narration, music and cloning controls together.' : 'Make every line readable. Preview the style before rendering.')}</p></div></div>
@@ -466,10 +570,27 @@
             <h2>{t('Voice')}</h2><Field label={t('Voice Mode')} bind:value={voiceMode} choices={[choice('tts', 'TTS'),choice('upload','Upload'),choice('none','Silent')]}/>
             {#if voiceMode === 'tts'}
               <Field label={t('Voice Provider')} bind:value={voiceProvider} choices={Object.entries(boot.tts_providers).map(([value,label]) => ({value,label:t(speechLabels[value] || String(label))}))}/>
+              {#if voiceProvider === 'gemini-tts' && geminiVoiceModel}
+                <div on:change={changeGeminiVoiceModel}><Field label={t('Gemini TTS Model')} bind:value={selectedGeminiVoiceModel} choices={geminiTtsModels} disabled={!!busy || voicesLoading}/></div>
+              {/if}
+              {#if voiceProvider === 'gemini-tts' && voiceLocales.length}
+                <div on:change={() => {localStorage.setItem('mpt-gemini-voice-locale',voiceLocale); voiceFilter = ''; voiceGender = ''; voiceCategory = '';}}><Field label={t('Voice Language / Region')} bind:value={voiceLocale} choices={[{value:'',label:t('All languages / regions')},...voiceLocales.map(code => ({value:code,label:voiceLocaleLabel(code)}))]}/></div>
+              {:else if voiceProvider === 'gemini-tts' && geminiVoiceModel && !geminiVoiceModel.startsWith('gemini-3.8-')}
+                <p class="muted">{t('Gemini 2.5 offers 30 multilingual voices. Gemini 3.8 adds regional voices.')}</p>
+              {/if}
               {#if voicesLoading}<p role="status">{t('Loading voices…')}</p>{/if}{#if voiceError}<p class="notice error" role="alert">{voiceError}</p>{/if}
-              <Field label={t('Find Voice')} bind:value={voiceFilter}/>
-              <Field label={t('Voice')} bind:value={params.voice_name} choices={voiceList.filter(v => v.toLowerCase().includes(voiceFilter.toLowerCase()))}/>
-              {#if voiceProvider === 'minimax-tts'}<label class="field">{t('Manual Voice ID')}<input type="text" value={params.voice_name?.replace(/^minimax:/,'') || ''} on:input={e => {params.voice_name = 'minimax:' + (e.currentTarget as HTMLInputElement).value.trim();}}><small>{t('Enter a MiniMax voice ID, including a private or cloned voice.')}</small></label>{/if}
+              {#if voiceProvider === 'gemini-tts' && Object.keys(voiceDetails).length}
+                <div class="form-grid">
+                  <div on:change={selectVisibleVoice}><Field label={t('Voice Gender')} bind:value={voiceGender} choices={[{value:'',label:t('All genders')},...['female','male','neutral'].map(value => ({value,label:t(value[0].toUpperCase() + value.slice(1))}))]}/></div>
+                  <div on:change={selectVisibleVoice}><Field label={t('Voice Category')} bind:value={voiceCategory} choices={[{value:'',label:t('All categories')},...voiceCategories.map(value => ({value,label:t(value)}))]}/></div>
+                </div>
+              {/if}
+              <div on:input={selectVisibleVoice}><Field label={t('Find Voice')} bind:value={voiceFilter}/></div>
+              {#if voiceProvider === 'gemini-tts'}<small>{visibleVoices.length} {t('voices available in this selection')}</small>{/if}
+              {#if !visibleVoices.length && voiceList.length}<p class="muted">{t('No voices match these filters.')}</p>{/if}
+              <div on:change={rememberVoice}><Field label={t('Voice')} bind:value={params.voice_name} choices={visibleVoices.map(value => ({value,label:voiceLabel(value)}))} help={t('Your last selected voice is saved automatically.')}/></div>
+              {#if voiceDetails[params.voice_name]}<p class="muted">{voiceDetails[params.voice_name].description || voiceDetails[params.voice_name].persona || ''}</p>{/if}
+              {#if voiceProvider === 'minimax-tts'}<label class="field">{t('Manual Voice ID')}<input type="text" value={params.voice_name?.replace(/^minimax:/,'') || ''} on:input={e => {params.voice_name = 'minimax:' + (e.currentTarget as HTMLInputElement).value.trim();}} on:change={rememberVoice}><small>{t('Enter a MiniMax voice ID, including a private or cloned voice.')}</small></label>{/if}
               <div class="actions"><button class="quiet" disabled={voicesLoading} on:click={() => loadVoices(voiceProvider,true)}>{t('Refresh')}</button><button class="quiet" on:click={() => navigate('settings','speech')}>{t('Configure Narration AI')}</button></div>
               {#if voiceProvider === 'voxcpm'}
                 <label class="upload-zone">{t('Reference Audio')}<input type="file" accept="audio/*" disabled={!!busy} on:change={e => uploadFiles('reference',e)}></label>{#if reference}<p>{reference.name}<button class="quiet" on:click={() => {reference = null; preview = null;}}>{t('Remove')}</button></p>{/if}
@@ -477,11 +598,11 @@
                 <Field label={t('Prompt Transcript')} bind:value={promptText} type="textarea" help={t('Private reference audio expires after 30 minutes and is never stored in task history.')}/>
               {/if}
               <Field label={t('Sample Text')} bind:value={sampleText} type="textarea"/>
-              <div class="actions"><button disabled={!!busy || !params.voice_name} on:click={() => audition()}>{t('Preview Voice')}</button><button disabled={!!busy || !params.video_script} on:click={() => audition(true)}>{t('Preview Full Narration')}</button></div>
+              <div class="actions"><button disabled={!!busy || !voiceMatchesProvider} on:click={() => audition()}>{t('Preview Voice')}</button><button disabled={!!busy || !params.video_script || !voiceMatchesProvider} on:click={() => audition(true)}>{t('Preview Full Narration')}</button></div>
               <small>{t('Preview requests use the selected provider. A matching full preview is reused during generation.')}</small>
               {#if preview}<audio class="audio-player" controls src={preview.url} preload="metadata"></audio><p class="muted">{preview.duration.toFixed(1)} s · {t(preview.full ? 'Full Narration' : 'Sample')}</p>{/if}
             {:else if voiceMode === 'upload'}
-              <label class="upload-zone">{t('Upload Narration')}<input type="file" accept="audio/*" disabled={!!busy} on:change={e => uploadFiles('narration',e)}></label>{#if narration}<p>{narration.name}</p><audio controls src={narration.url} preload="metadata"></audio>{/if}<p class="muted">{t('Use Whisper subtitles for uploaded narration; the model loads only when transcription is requested.')}</p>
+              <label class="upload-zone">{t('Upload Narration')}<input type="file" accept="audio/*" disabled={!!busy} on:change={e => uploadFiles('narration',e)}></label>{#if narration}<p>{narration.name}</p><audio controls src={narration.url} preload="metadata"></audio>{/if}<p class="muted">{t('Choose Whisper or Gemini transcription in settings to subtitle uploaded narration.')}</p>
             {/if}
             <div class="form-grid"><Field label={t('Voice Volume')} bind:value={params.voice_volume} type="number" min={0} max={10} step={.1}/><Field label={t('Voice Rate')} bind:value={params.voice_rate} type="number" min={.25} max={4} step={.05}/></div>
             <h2>{t('Background Music')}</h2><Field label={t('Background Music')} bind:value={params.bgm_type} choices={Object.entries(musicLabels).map(([value,label]) => ({value,label:t(label)}))}/>
@@ -489,15 +610,16 @@
               <Field label={t('Background Music')} bind:value={params.bgm_file} choices={params.bgm_type === 'preset' ? catalog?.builtin_music || [] : catalog?.music?.map((m: Data) => ({value:m.id,label:m.name})) || []}/>{#if params.bgm_file}<audio class="audio-player" controls src="/api/v1/studio/music/{encodeURIComponent(params.bgm_file.split(/[\\/]/).pop())}" preload="none"></audio>{/if}
             {/if}
             {#if params.bgm_type === 'custom'}<label class="upload-zone">{t('Upload Music')}<input type="file" accept="audio/*" disabled={!!busy} on:change={e => uploadFiles('music',e)}></label>{/if}
-            {#if ['sonilo','elevenlabs'].includes(params.bgm_type)}<Field label={t('Music Prompt')} bind:value={params.video_music_prompt} type="textarea"/><button class="quiet" on:click={() => navigate('settings','music')}>{t('Configure Music AI')}</button>{/if}
+            {#if ['sonilo','elevenlabs','lyria'].includes(params.bgm_type)}<Field label={t('Music Prompt')} bind:value={params.video_music_prompt} type="textarea"/><button class="quiet" on:click={() => navigate('settings','music')}>{t('Configure Music AI')}</button>{/if}
             <Field label={t('Music Volume')} bind:value={params.bgm_volume} type="number" min={0} max={10} step={.05}/>
           {:else}
             <Field label={t('Enable Subtitles')} bind:value={params.subtitle_enabled} type="checkbox"/>
             <div class="caption-preview" style:aspect-ratio={params.video_aspect?.replace(':',' / ')} aria-label={t('Caption Preview')}>
               <span class="canvas-label">{t('Caption Preview')}</span>
-              {#if params.subtitle_enabled}<span class="caption-line" style:top={params.subtitle_position === 'top' ? '12%' : params.subtitle_position === 'center' ? '50%' : params.subtitle_position === 'custom' ? params.custom_position + '%' : params.subtitle_position === 'two_thirds_bottom' ? '66%' : '83%'} style:color={params.text_fore_color} style:font-size={Math.max(12,params.font_size/3) + 'px'} style:background={params.text_background_color || 'transparent'} style:border-radius={params.rounded_subtitle_background ? '6px' : '0'} style:-webkit-text-stroke={params.stroke_width / 3 + 'px ' + params.stroke_color}>{params.video_script?.split(/[.!?\n]/)[0]?.slice(0,80) || t('Your story, clearly told.')}</span>{/if}
+              {#if params.subtitle_enabled}<span class="caption-line" style:top={params.subtitle_position === 'top' ? '12%' : params.subtitle_position === 'center' ? '50%' : params.subtitle_position === 'custom' ? params.custom_position + '%' : params.subtitle_position === 'two_thirds_bottom' ? '66%' : '83%'} style:color={params.text_fore_color} style:font-size={Math.max(12,params.font_size/3) + 'px'} style:font-family={captionPreviewFont ? `"${captionPreviewFont}"` : undefined} style:background={params.text_background_color || 'transparent'} style:border-radius={params.rounded_subtitle_background ? '6px' : '0'} style:-webkit-text-stroke={params.stroke_width / 3 + 'px ' + params.stroke_color}>{params.video_script?.split(/[.!?\n]/)[0]?.slice(0,80) || t('Your story, clearly told.')}</span>{/if}
             </div>
-            <small>{t('Layout preview only; final font rendering and animation are applied by the video engine.')}</small>
+            <small>{t('The preview uses the selected font; final placement and animation are applied by the video engine.')}</small>
+            {#if captionFontError}<p class="notice error" role="alert">{captionFontError}</p>{/if}
             <div class="form-grid"><Field label={t('Font')} bind:value={params.font_name} choices={catalog?.fonts || []}/><Field label={t('Font Size')} bind:value={params.font_size} type="number" min={1} max={500} step={1}/><Field label={t('Text Color')} bind:value={params.text_fore_color} type="color"/><Field label={t('Outline Color')} bind:value={params.stroke_color} type="color"/><Field label={t('Outline Width')} bind:value={params.stroke_width} type="number" min={0} max={50} step={.1}/><Field label={t('Subtitle Position')} bind:value={params.subtitle_position} choices={[choice('top','Top'),choice('center','Center'),choice('bottom','Bottom'),choice('two_thirds_bottom','Two-thirds down'),choice('custom','Custom')]}/></div>
             {#if params.subtitle_position === 'custom'}<Field label={t('Custom Position')} bind:value={params.custom_position} type="number" min={0} max={100} step={1}/>{/if}
             <Field label={t('Subtitle Display Mode')} bind:value={params.subtitle_display_mode} choices={[choice('sentence','Sentence'),choice('word_by_word','Word by Word')]}/><Field label={t('Subtitle Animation')} bind:value={params.subtitle_animation} choices={[choice('none','None'),choice('pop_spring','Pop Spring')]}/>
@@ -505,22 +627,23 @@
             <button class="quiet" on:click={() => navigate('settings','transcription')}>{t('Subtitle Provider Settings')}</button>
           {/if}
           {#if quote && ((quoteKind === 'script' && stage === 'script') || (quoteKind === 'video' && stage === 'footage'))}<section class="quote-panel" aria-label={t('Quote')}><h2>{t('Quote')}</h2><p>{quote.estimated_buyer_payable_amount} {quote.currency} · {quote.task_count} {t('tasks')}</p><p class="muted">{t('A quote is an estimate. Actual charges can differ, including when the estimate is zero.')}</p><small>{t('Listing version')}: {quote.listing_version_id}</small>{#if quoteChanged}<p class="notice error">{t('Inputs changed. Request a new quote before confirming.')}</p>{:else}<Field label={t('I confirm this charge for these exact inputs.')} bind:value={chargeConfirmed} type="checkbox"/>{#if quoteKind === 'script'}<button class="primary" disabled={!!busy || !chargeConfirmed || !!scriptRunId} on:click={executeScript}>{t('Run Confirmed Batch')}</button>{/if}{/if}</section>{/if}
+          {#if !voiceMatchesProvider}<p class="notice" role="status">{t('Choose a voice for the selected narration provider in Sound.')} <button class="quiet" on:click={() => stage = 'sound'}>{t('Sound')}</button></p>{/if}
           <footer class="generation-bar"><div><strong>{params.video_aspect} · {params.video_count} {t('video(s)')}</strong><small>{estimate ? `${t('Estimated Narration')}: ${estimate[0]}–${estimate[1]} s` : t('Write a script to estimate narration length.')}</small></div><button class="primary" disabled={generationBlocked} on:click={generate}>{busy === 'generate' ? t('Generating') : t('Generate Video')}</button></footer>
         </section>
-        <TaskPanel {task} {t} refresh={refreshTask} {restore}/>
+        <TaskPanel bind:task {t} refresh={refreshTask} {restore}/>
       </div>
     {:else if view === 'settings'}
       {#if SettingsComponent}<svelte:component this={SettingsComponent} {t} providers={boot.llm_providers} sources={boot.sources} speechProviders={boot.tts_providers} initialCategory={settingsCategory} videoSource={params.video_source} speechSource={voiceProvider} musicSource={params.bgm_type} onsaved={settingsSaved} onclose={() => navigate('editor')}/>{:else}<p role="status">{t('Loading settings…')}</p>{/if}
     {:else if view === 'history'}
-      <section class="history-workspace"><div class="workspace-heading"><div><h1>{t('History')}</h1><p>{t('Revisit a render, download its files or use its settings as a starting point.')}</p></div><button disabled={!!busy} on:click={() => navigate('history')}>{t('Refresh')}</button></div><div class="form-grid"><Field label={t('Search History')} bind:value={historySearch}/><Field label={t('Status')} bind:value={historyFilter} choices={[choice('all','All'),choice('4','Generating'),choice('1','Complete'),choice('-1','Failed')]}/></div>
+      <section class="history-workspace"><div class="workspace-heading"><div><h1>{t('History')}</h1><p>{t('Revisit a render, download its files or use its settings as a starting point.')}</p></div><button disabled={!!busy} on:click={() => navigate('history')}>{t('Refresh')}</button></div><div class="form-grid"><Field label={t('Search History')} bind:value={historySearch}/><Field label={t('Status')} bind:value={historyFilter} choices={[choice('all','All'),choice('4','Generating'),choice('1','Complete'),choice('-1','Failed'),choice('-2','Cancelled')]}/></div>
       {#if !filteredHistory.length}<p class="empty-state">{busy === 'history' ? t('Loading…') : t('No tasks found.')}</p>{/if}
-      <ul class="history-list">{#each filteredHistory as entry}<li><button class="history-entry" on:click={() => selectTask(entry.task_id)}><strong>{entry.subject}</strong><small>{entry.task_id}</small></button><span class="status" class:failed={entry.state === -1}>{t(entry.state === 4 ? 'Generating' : entry.state === -1 ? 'Failed' : entry.video_files?.length ? 'Complete' : 'Waiting')}</span><small>{entry.mtime ? new Date(entry.mtime * 1000).toLocaleDateString(language) : ''}</small><button class="quiet danger" disabled={!!busy || entry.state === 4 || ['pending','processing'].includes(entry.cross_post_state)} on:click={() => deleteTask(entry.task_id)}>{t('Delete')}</button></li>{/each}</ul>
+      <ul class="history-list">{#each filteredHistory as entry}<li><button class="history-entry" on:click={() => selectTask(entry.task_id)}><strong>{entry.subject}</strong><small>{entry.task_id}</small></button><span class="status" class:failed={entry.state === -1}>{t(entry.state === 4 ? 'Generating' : entry.state === -2 ? 'Cancelled' : entry.state === -1 ? 'Failed' : entry.video_files?.length ? 'Complete' : 'Waiting')}</span><small>{entry.mtime ? new Date(entry.mtime * 1000).toLocaleDateString(language) : ''}</small><button class="quiet danger" disabled={!!busy || entry.state === 4 || ['pending','processing'].includes(entry.cross_post_state)} on:click={() => deleteTask(entry.task_id)}>{t('Delete')}</button></li>{/each}</ul>
       {#if history.length >= historyLimit && historyLimit < 1000}<button on:click={() => {historyLimit = Math.min(1000,historyLimit + 30); void navigate('history');}}>{t('Load More')}</button>{/if}</section>
     {:else}
-      <section class="help-workspace"><div class="workspace-heading"><div><h1>{t('Help')}</h1><p>MoneyPrinterTurbo {boot.version}</p></div><button disabled={!!busy} on:click={() => run('version',async () => {version = await api('/version');})}>{t('Check for Updates')}</button></div>{#if version}<p class="notice">{version.update ? `${t('Update available')}: ${version.update}` : t('You are up to date.')}</p>{/if}
+      <section class="help-workspace"><div class="workspace-heading"><div><h1>{t('Help')}</h1><p>MoneyMachine {boot.version}</p></div><button disabled={!!busy} on:click={() => run('version',async () => {version = await api('/version');})}>{t('Check for Updates')}</button></div>{#if version}<p class="notice">{version.update ? `${t('Update available')}: ${version.update}` : t('You are up to date.')}</p>{/if}
       <h2>{t('Your first video')}</h2><ol class="help-steps"><li>{t('Write a subject and generate or paste a script.')}</li><li>{t('Configure a stock or generation provider, or upload local images and videos.')}</li><li>{t('Select a voice, upload narration or choose silent mode. Audition before rendering.')}</li><li>{t('Set your subtitle style and generate. Progress and files stay in the output panel.')}</li></ol>
       <p>{t('Paid script, speech, music and video services use your configured provider account. LoomLoom requires a separate quote and explicit confirmation. No provider is contacted simply by opening the editor.')}</p>
-      <p>{t('Whisper and video libraries load only when their operation is requested. For uploaded narration, select Whisper in the subtitle provider settings.')}</p><div class="actions"><button on:click={() => navigate('settings')}>{t('Provider Settings')}</button><a href="/docs" target="_blank" rel="noreferrer">{t('API Documentation')}</a><a href="https://github.com/LucasGazula/MoneyPrinterTurbo" target="_blank" rel="noreferrer">GitHub</a></div>
+      <p>{t('Whisper and video libraries load only when their operation is requested. For uploaded narration, select Whisper in the subtitle provider settings.')}</p><div class="actions"><button on:click={() => navigate('settings')}>{t('Provider Settings')}</button><a href="/docs" target="_blank" rel="noreferrer">{t('API Documentation')}</a><a href="https://github.com/LucasGazula/MoneyMachine" target="_blank" rel="noreferrer">GitHub</a></div>
       <h2>{t('Cache')}</h2><Field label={t('Age in Days')} bind:value={cacheDays} type="number" min={1} step={1} help={t('Leave empty to include all cached stock-video downloads.')}/><div class="actions"><button disabled={!!busy} on:click={() => run('cache', inspectCache)}>{t('Inspect Cache')}</button><button disabled={!!busy || !cache} on:click={cleanCache}>{t('Clean Cache')}</button></div>{#if cache}<p>{cache.file_count} {t('files')} · {(cache.total_size / 1024 / 1024).toFixed(1)} MB</p>{/if}
       <h2>{t('Local deployment')}</h2><p>{t('This interface is served by the same FastAPI process as the API. Node and Streamlit are not needed in production. On a headless Raspberry Pi, use the browser preview and downloads instead of opening a desktop player.')}</p><button on:click={() => run('logout',async () => {await api('/session',undefined,'DELETE'); unauthorized = true;})}>{t('Sign Out')}</button>
       </section>

@@ -105,6 +105,200 @@ class TestVideoService(unittest.TestCase):
                 )
         open_video.assert_called_once_with("unused.mp4")
 
+    def test_ffmpeg_subtitle_fast_path_builds_native_render_command(self):
+        """无背景音乐、背景和动画的字幕应绕过 MoviePy 的逐帧合成。"""
+        params = vd.VideoParams(
+            video_subject="Coffee",
+            subtitle_enabled=True,
+            subtitle_position="bottom",
+            bgm_type="",
+            font_name="BeVietnamPro-Bold.ttf",
+        )
+        font_path = os.path.join(utils.font_dir(), params.font_name)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            subtitle_path = os.path.join(temp_dir, "captions.srt")
+            Path(subtitle_path).write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\nCoffee\n\n",
+                encoding="utf-8",
+            )
+            completed = types.SimpleNamespace(returncode=0, stderr="")
+            with patch.object(vd.subprocess, "run", return_value=completed) as run:
+                result = vd._try_generate_video_with_ffmpeg(
+                    video_path="combined.mp4",
+                    audio_path="voice.wav",
+                    subtitle_path=subtitle_path,
+                    output_file="final.mp4",
+                    params=params,
+                    font_path=font_path,
+                    video_height=1920,
+                )
+
+        self.assertTrue(result)
+        command = run.call_args.args[0]
+        self.assertIn("-vf", command)
+        self.assertIn("subtitles=", command[command.index("-vf") + 1])
+        self.assertIn("force_style=", command[command.index("-vf") + 1])
+        self.assertIn("PlayResX=1080", command[command.index("-vf") + 1])
+        self.assertIn("PlayResY=1920", command[command.index("-vf") + 1])
+        self.assertIn("WrapStyle=1", command[command.index("-vf") + 1])
+        self.assertIn("Bold=1", command[command.index("-vf") + 1])
+        self.assertEqual(command[command.index("-preset") + 1], "veryfast")
+        self.assertIn("-threads", command)
+
+    def test_ffmpeg_fast_path_muxes_without_subtitles(self):
+        """不需要字幕时只复用视频流，避免无意义的第二次视频编码。"""
+        params = vd.VideoParams(video_subject="Coffee", subtitle_enabled=False, bgm_type="")
+        completed = types.SimpleNamespace(returncode=0, stderr="")
+        with patch.object(vd.subprocess, "run", return_value=completed) as run:
+            result = vd._try_generate_video_with_ffmpeg(
+                video_path="combined.mp4",
+                audio_path="voice.wav",
+                subtitle_path="",
+                output_file="final.mp4",
+                params=params,
+                font_path="",
+                video_height=1920,
+            )
+
+        self.assertTrue(result)
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("-c:v") + 1], "copy")
+        self.assertNotIn("-vf", command)
+
+    def test_ffmpeg_subtitle_fast_path_supports_rectangular_background(self):
+        """矩形字幕背景应使用 libass，避免 MoviePy 的逐帧合成。"""
+        params = vd.VideoParams(
+            video_subject="Coffee",
+            subtitle_enabled=True,
+            subtitle_position="bottom",
+            text_background_color="#112233",
+            rounded_subtitle_background=False,
+            bgm_type="",
+            font_name="BeVietnamPro-Bold.ttf",
+        )
+        font_path = os.path.join(utils.font_dir(), params.font_name)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            subtitle_path = os.path.join(temp_dir, "captions.srt")
+            Path(subtitle_path).write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\nCoffee\n\n",
+                encoding="utf-8",
+            )
+            completed = types.SimpleNamespace(returncode=0, stderr="")
+            with patch.object(vd.subprocess, "run", return_value=completed) as run:
+                result = vd._try_generate_video_with_ffmpeg(
+                    video_path="combined.mp4",
+                    audio_path="voice.wav",
+                    subtitle_path=subtitle_path,
+                    output_file="final.mp4",
+                    params=params,
+                    font_path=font_path,
+                    video_height=1920,
+                )
+
+        self.assertTrue(result)
+        subtitle_filter = run.call_args.args[0][run.call_args.args[0].index("-vf") + 1]
+        self.assertIn("BorderStyle=3", subtitle_filter)
+        self.assertIn("OutlineColour=&H00332211", subtitle_filter)
+        self.assertEqual(subtitle_filter.count("subtitles="), 2)
+
+    def test_ffmpeg_subtitle_fast_path_uses_one_layer_for_matching_box_and_stroke(self):
+        """背景色和描边色相同时应只运行一层 libass。"""
+        params = vd.VideoParams(
+            video_subject="Coffee",
+            subtitle_enabled=True,
+            subtitle_position="bottom",
+            text_background_color="#000000",
+            stroke_color="#000000",
+            rounded_subtitle_background=False,
+            bgm_type="",
+            font_name="BeVietnamPro-Bold.ttf",
+        )
+        font_path = os.path.join(utils.font_dir(), params.font_name)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            subtitle_path = os.path.join(temp_dir, "captions.srt")
+            Path(subtitle_path).write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\nCoffee\n\n",
+                encoding="utf-8",
+            )
+            completed = types.SimpleNamespace(returncode=0, stderr="")
+            with patch.object(vd.subprocess, "run", return_value=completed) as run:
+                result = vd._try_generate_video_with_ffmpeg(
+                    video_path="combined.mp4",
+                    audio_path="voice.wav",
+                    subtitle_path=subtitle_path,
+                    output_file="final.mp4",
+                    params=params,
+                    font_path=font_path,
+                    video_height=1920,
+                )
+
+        self.assertTrue(result)
+        subtitle_filter = run.call_args.args[0][run.call_args.args[0].index("-vf") + 1]
+        self.assertEqual(subtitle_filter.count("subtitles="), 1)
+        self.assertIn("BorderStyle=3", subtitle_filter)
+
+    def test_ffmpeg_subtitle_fast_path_keeps_rounded_background_fallback(self):
+        """圆角背景仍交给 MoviePy，避免用不同形状替代用户选择。"""
+        params = vd.VideoParams(
+            video_subject="Coffee",
+            subtitle_enabled=True,
+            subtitle_position="bottom",
+            text_background_color="#112233",
+            rounded_subtitle_background=True,
+            bgm_type="",
+            font_name="BeVietnamPro-Bold.ttf",
+        )
+        font_path = os.path.join(utils.font_dir(), params.font_name)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            subtitle_path = os.path.join(temp_dir, "captions.srt")
+            Path(subtitle_path).write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\nCoffee\n\n",
+                encoding="utf-8",
+            )
+            with patch.object(vd.subprocess, "run") as run:
+                result = vd._try_generate_video_with_ffmpeg(
+                    video_path="combined.mp4",
+                    audio_path="voice.wav",
+                    subtitle_path=subtitle_path,
+                    output_file="final.mp4",
+                    params=params,
+                    font_path=font_path,
+                    video_height=1920,
+                )
+
+        self.assertIsNone(result)
+        run.assert_not_called()
+
+    def test_ffmpeg_fast_path_mixes_bgm_without_moviepy(self):
+        """有可用 BGM 时也应让 FFmpeg 完成循环、淡出和混音。"""
+        params = vd.VideoParams(
+            video_subject="Coffee",
+            subtitle_enabled=False,
+            bgm_type="lyria",
+            bgm_volume=0.2,
+        )
+        completed = types.SimpleNamespace(returncode=0, stderr="")
+        with tempfile.NamedTemporaryFile(suffix=".wav") as bgm_file, patch.object(
+            vd, "_read_video_metadata", return_value=(4.0, 1080, 1920)
+        ), patch.object(vd.subprocess, "run", return_value=completed) as run:
+            result = vd._try_generate_video_with_ffmpeg(
+                video_path="combined.mp4",
+                audio_path="voice.wav",
+                subtitle_path="",
+                output_file="final.mp4",
+                params=params,
+                font_path="",
+                video_height=1920,
+                bgm_file=bgm_file.name,
+            )
+
+        self.assertTrue(result)
+        command = run.call_args.args[0]
+        self.assertIn("-stream_loop", command)
+        self.assertIn("-filter_complex", command)
+        self.assertIn("amix=inputs=2", command[command.index("-filter_complex") + 1])
+        self.assertIn("-t", command)
+
     def test_subtitle_spring_animation_keeps_color_and_mask_aligned(self):
         """
         弹跳动画必须同步缩放颜色帧和透明蒙版。
@@ -392,15 +586,16 @@ class TestVideoService(unittest.TestCase):
                 self.assertEqual(voice_source.close_calls, 1)
                 self.assertEqual(final_video.close_calls, 1)
 
-    def test_generate_video_chooses_looping_by_bgm_file_source(self):
-        """默认曲库需要循环，任务层提供的时长适配文件不应依赖提供商名称。"""
+    def test_generate_video_loops_every_bgm_source_to_video_duration(self):
+        """短于成片的 Lyria 等配乐也要循环，较长配乐要截到成片时长。"""
         test_cases = [
-            ("random", None, True),
-            ("custom", None, True),
-            ("sonilo", "sonilo.m4a", False),
-            ("future_provider", "future-provider.wav", False),
+            ("random", None),
+            ("custom", None),
+            ("sonilo", "sonilo.m4a"),
+            ("lyria", "lyria.mp3"),
+            ("future_provider", "future-provider.wav"),
         ]
-        for bgm_type, bgm_override, should_loop in test_cases:
+        for bgm_type, bgm_override in test_cases:
             with self.subTest(bgm_type=bgm_type, bgm_override=bgm_override):
                 params = vd.VideoParams(
                     video_subject="test",
@@ -445,10 +640,7 @@ class TestVideoService(unittest.TestCase):
                     )
 
                 self.assertTrue(result)
-                if should_loop:
-                    audio_loop.assert_called_once_with(duration=source_video.duration)
-                else:
-                    audio_loop.assert_not_called()
+                audio_loop.assert_called_once_with(duration=source_video.duration)
 
     def test_preprocess_video(self):
         if not os.path.exists(self.test_img_path):
@@ -668,6 +860,31 @@ class TestVideoService(unittest.TestCase):
                 "C:/Users/Test User'\\''s Videos/clip.mp4",
             )
 
+    def test_concat_video_clips_uses_stream_copy_for_default_codec(self):
+        """同编码器的中间片段应直接串联，避免第二次视频编码。"""
+        config.app["video_codec"] = "libx264"
+
+        def fake_run(command, capture_output, text, check, **kwargs):
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            clip_file = os.path.join(temp_dir, "clip.mp4")
+            output_file = os.path.join(temp_dir, "combined.mp4")
+            Path(clip_file).write_bytes(b"fake")
+
+            with patch.object(vd.subprocess, "run", side_effect=fake_run) as run:
+                result = vd.concat_video_clips_with_ffmpeg(
+                    clip_files=[clip_file],
+                    output_file=output_file,
+                    threads=1,
+                    output_dir=temp_dir,
+                )
+
+        command = run.call_args.args[0]
+        self.assertEqual(result, "copy")
+        self.assertEqual(command[command.index("-c:v") + 1], "copy")
+        self.assertNotIn("-pix_fmt", command)
+
     def test_concat_video_clips_falls_back_after_runtime_encoder_failure(self):
         """
         最终 ffmpeg concat 阶段也要具备同样的回退能力。这里用 mock 模拟
@@ -775,6 +992,26 @@ class TestVideoService(unittest.TestCase):
             finally:
                 vd.close_clip(clip)
 
+    def test_video_metadata_cache_reuses_unchanged_source(self):
+        """多条输出复用同一素材时不应重复启动 MoviePy metadata reader。"""
+        class _MetadataClip:
+            duration = 2.0
+            size = (1080, 1920)
+
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as source:
+            vd._read_video_metadata_cached.cache_clear()
+            with patch.object(
+                vd,
+                "_open_video_clip_quietly",
+                return_value=_MetadataClip(),
+            ) as open_video:
+                first = vd._read_video_metadata(source.name)
+                second = vd._read_video_metadata(source.name)
+
+            self.assertEqual(first, second)
+            open_video.assert_called_once_with(source.name)
+            vd._read_video_metadata_cached.cache_clear()
+
     def test_combine_videos_closes_audio_clip_when_duration_read_fails(self):
         """
         `combine_videos()` 只需要读取旁白音频时长。即使读取 duration
@@ -835,6 +1072,322 @@ class TestVideoService(unittest.TestCase):
                     video_transition_mode=None,
                 )
                 self.assertEqual(result, combined_video_path)
+
+    def test_ffmpeg_source_concat_builds_one_filter_graph(self):
+        """无转场素材应在单次 FFmpeg 调用中裁切、适配画布并拼接。"""
+        config.app["video_codec"] = "libx264"
+        source_clips = [
+            vd.SubClippedVideoClip(
+                file_path="first.mp4",
+                start_time=0,
+                end_time=2,
+                width=1920,
+                height=1080,
+                source_file_path="first.mp4",
+            ),
+            vd.SubClippedVideoClip(
+                file_path="second.mp4",
+                start_time=1,
+                end_time=3,
+                width=1080,
+                height=1920,
+                source_file_path="second.mp4",
+            ),
+        ]
+
+        def fake_run(command, capture_output, text, check, **kwargs):
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = os.path.join(temp_dir, "combined.mp4")
+            with patch.object(vd.subprocess, "run", side_effect=fake_run) as run:
+                self.assertTrue(
+                    vd._try_combine_source_clips_with_ffmpeg(
+                        source_clips=source_clips,
+                        output_file=output_file,
+                        video_width=1080,
+                        video_height=1920,
+                        video_fit_mode=vd.VideoFitMode.cover,
+                        audio_duration=3.5,
+                        threads=2,
+                    )
+                )
+
+        command = run.call_args.args[0]
+        filter_graph = command[command.index("-filter_complex") + 1]
+        self.assertEqual(command.count("-i"), 2)
+        self.assertIn("trim=start=0.000000:end=2.000000", filter_graph)
+        self.assertIn("trim=start=1.000000:end=3.000000", filter_graph)
+        self.assertIn("concat=n=2:v=1:a=0", filter_graph)
+        self.assertEqual(command[command.index("-c:v") + 1], "libx264")
+        self.assertEqual(command[command.index("-preset") + 1], "veryfast")
+
+    def test_ffmpeg_sequential_concat_uses_one_input_list(self):
+        """同步素材按顺序拼接时只打开一个 concat 输入，降低 FFmpeg 内存。"""
+        config.app["video_codec"] = "libx264"
+        source_clips = [
+            vd.SubClippedVideoClip(
+                file_path="first.mp4", start_time=0, end_time=2, duration=2
+            ),
+            vd.SubClippedVideoClip(
+                file_path="second.mp4", start_time=0, end_time=2, duration=2
+            ),
+        ]
+        observed_list = {}
+
+        def fake_run(command, capture_output, text, check, **kwargs):
+            list_file = command[command.index("-i") + 1]
+            observed_list["content"] = Path(list_file).read_text(encoding="utf-8")
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = os.path.join(temp_dir, "combined.mp4")
+            with patch.object(vd.subprocess, "run", side_effect=fake_run) as run:
+                self.assertTrue(
+                    vd._try_combine_source_clips_with_ffmpeg(
+                        source_clips=source_clips,
+                        output_file=output_file,
+                        video_width=1080,
+                        video_height=1920,
+                        video_fit_mode=vd.VideoFitMode.cover,
+                        audio_duration=3.5,
+                        threads=2,
+                        sequential=True,
+                    )
+                )
+
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("-f") + 1], "concat")
+        self.assertEqual(command.count("-i"), 1)
+        self.assertIn("outpoint 2.000000", observed_list["content"])
+        self.assertIn("-vf", command)
+        self.assertNotIn("-filter_complex", command)
+        self.assertFalse(os.path.exists(command[command.index("-i") + 1]))
+
+    def test_ffmpeg_sequential_concat_uses_stream_copy_for_matching_dimensions(self):
+        """同分辨率同步素材应跳过第二次视频编码。"""
+        config.app["video_codec"] = "libx264"
+        source_clips = [
+            vd.SubClippedVideoClip(
+                file_path="first.mp4",
+                start_time=0,
+                end_time=2,
+                duration=2,
+                width=1080,
+                height=1920,
+            ),
+            vd.SubClippedVideoClip(
+                file_path="second.mp4",
+                start_time=0,
+                end_time=2,
+                duration=2,
+                width=1080,
+                height=1920,
+            ),
+        ]
+
+        def fake_run(command, capture_output, text, check, **kwargs):
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = os.path.join(temp_dir, "combined.mp4")
+            with patch.object(vd.subprocess, "run", side_effect=fake_run) as run:
+                self.assertTrue(
+                    vd._try_combine_source_clips_with_ffmpeg(
+                        source_clips=source_clips,
+                        output_file=output_file,
+                        video_width=1080,
+                        video_height=1920,
+                        video_fit_mode=vd.VideoFitMode.cover,
+                        audio_duration=3.5,
+                        threads=2,
+                        sequential=True,
+                    )
+                )
+
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("-c:v") + 1], "copy")
+        self.assertNotIn("-vf", command)
+        self.assertNotIn("-threads", command)
+
+    def test_ffmpeg_sequential_concat_supports_source_ranges(self):
+        """无转场同步也应支持从源视频中读取非零起点片段。"""
+        config.app["video_codec"] = "libx264"
+        source_clip = vd.SubClippedVideoClip(
+            file_path="clip.mp4",
+            start_time=2,
+            end_time=4,
+            duration=2,
+        )
+        observed_list = {}
+
+        def fake_run(command, capture_output, text, check, **kwargs):
+            list_file = command[command.index("-i") + 1]
+            observed_list["content"] = Path(list_file).read_text(encoding="utf-8")
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = os.path.join(temp_dir, "combined.mp4")
+            with patch.object(vd.subprocess, "run", side_effect=fake_run) as run:
+                self.assertTrue(
+                    vd._try_combine_source_clips_with_ffmpeg(
+                        source_clips=[source_clip],
+                        output_file=output_file,
+                        video_width=1080,
+                        video_height=1920,
+                        video_fit_mode=vd.VideoFitMode.cover,
+                        audio_duration=2,
+                        threads=2,
+                        sequential=True,
+                    )
+                )
+
+        self.assertIn("inpoint 2.000000", observed_list["content"])
+        command = run.call_args.args[0]
+        self.assertIn("-vf", command)
+        self.assertEqual(command[command.index("-c:v") + 1], "libx264")
+
+    def test_ffmpeg_sequential_concat_applies_clip_speed(self):
+        """同步素材的速度调整应留在 FFmpeg，避免 MoviePy 逐段渲染。"""
+        config.app["video_codec"] = "libx264"
+        source_clip = vd.SubClippedVideoClip(
+            file_path="clip.mp4",
+            start_time=0,
+            end_time=2,
+            duration=2,
+            width=1080,
+            height=1920,
+        )
+
+        def fake_run(command, capture_output, text, check, **kwargs):
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = os.path.join(temp_dir, "combined.mp4")
+            with patch.object(vd.subprocess, "run", side_effect=fake_run) as run:
+                self.assertTrue(
+                    vd._try_combine_source_clips_with_ffmpeg(
+                        source_clips=[source_clip],
+                        output_file=output_file,
+                        video_width=1080,
+                        video_height=1920,
+                        video_fit_mode=vd.VideoFitMode.cover,
+                        audio_duration=3.5,
+                        threads=2,
+                        sequential=True,
+                        clip_speed=0.5,
+                    )
+                )
+
+        command = run.call_args.args[0]
+        self.assertIn("setpts=PTS/0.5", command[command.index("-vf") + 1])
+        self.assertEqual(command[command.index("-c:v") + 1], "libx264")
+
+    def test_ffmpeg_source_concat_supports_deterministic_fade(self):
+        """FadeIn/FadeOut 这类固定转场也应跳过逐段 MoviePy 编码。"""
+        config.app["video_codec"] = "libx264"
+        source_clip = vd.SubClippedVideoClip(
+            file_path="clip.mp4", start_time=0, end_time=2, duration=2
+        )
+
+        def fake_run(command, capture_output, text, check, **kwargs):
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = os.path.join(temp_dir, "combined.mp4")
+            with patch.object(vd.subprocess, "run", side_effect=fake_run) as run:
+                self.assertTrue(
+                    vd._try_combine_source_clips_with_ffmpeg(
+                        source_clips=[source_clip],
+                        output_file=output_file,
+                        video_width=1080,
+                        video_height=1920,
+                        video_fit_mode=vd.VideoFitMode.cover,
+                        audio_duration=2,
+                        threads=2,
+                        transition_value=vd.VideoTransitionMode.fade_in.value,
+                    )
+                )
+
+        command = run.call_args.args[0]
+        self.assertIn("fade=t=in:st=0:d=1", command[command.index("-filter_complex") + 1])
+
+    def test_ffmpeg_source_concat_supports_motion_transitions(self):
+        """Slide/Zoom 转场应留在 FFmpeg，避免逐帧 Pillow 处理。"""
+        config.app["video_codec"] = "libx264"
+        source_clip = vd.SubClippedVideoClip(
+            file_path="clip.mp4", start_time=0, end_time=2, duration=2
+        )
+
+        def fake_run(command, capture_output, text, check, **kwargs):
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for transition, expected in (
+                (vd.VideoTransitionMode.slide_in.value, "overlay="),
+                (vd.VideoTransitionMode.zoom_in.value, "scale=w='ceil(iw*("),
+            ):
+                output_file = os.path.join(temp_dir, f"{transition}.mp4")
+                with patch.object(vd.subprocess, "run", side_effect=fake_run) as run:
+                    self.assertTrue(
+                        vd._try_combine_source_clips_with_ffmpeg(
+                            source_clips=[source_clip],
+                            output_file=output_file,
+                            video_width=1080,
+                            video_height=1920,
+                            video_fit_mode=vd.VideoFitMode.cover,
+                            audio_duration=2,
+                            threads=2,
+                            transition_value=transition,
+                            transition_sides=["right"],
+                        )
+                    )
+                filter_graph = run.call_args.args[0][
+                    run.call_args.args[0].index("-filter_complex") + 1
+                ]
+                self.assertIn(expected, filter_graph)
+
+    def test_ffmpeg_source_concat_supports_mixed_shuffle_transitions(self):
+        """Shuffle 应能把不同的确定性转场混在同一个 FFmpeg 图中。"""
+        config.app["video_codec"] = "libx264"
+        source_clips = [
+            vd.SubClippedVideoClip(
+                file_path="first.mp4", start_time=0, end_time=2, duration=2
+            ),
+            vd.SubClippedVideoClip(
+                file_path="second.mp4", start_time=0, end_time=2, duration=2
+            ),
+        ]
+
+        def fake_run(command, capture_output, text, check, **kwargs):
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = os.path.join(temp_dir, "combined.mp4")
+            with patch.object(vd.subprocess, "run", side_effect=fake_run) as run:
+                self.assertTrue(
+                    vd._try_combine_source_clips_with_ffmpeg(
+                        source_clips=source_clips,
+                        output_file=output_file,
+                        video_width=1080,
+                        video_height=1920,
+                        video_fit_mode=vd.VideoFitMode.cover,
+                        audio_duration=4,
+                        threads=2,
+                        transition_value=vd.VideoTransitionMode.shuffle.value,
+                        transition_values=[
+                            vd.VideoTransitionMode.zoom_in.value,
+                            vd.VideoTransitionMode.slide_in.value,
+                        ],
+                        transition_sides=["left", "right"],
+                    )
+                )
+
+        filter_graph = run.call_args.args[0][
+            run.call_args.args[0].index("-filter_complex") + 1
+        ]
+        self.assertIn("scale=w='ceil(iw*", filter_graph)
+        self.assertIn("overlay=", filter_graph)
 
     def _capture_source_ranges_for_clip_speed(
         self,
@@ -916,6 +1469,95 @@ class TestVideoService(unittest.TestCase):
                 )
 
         return source_ranges, written_durations
+
+    def test_combine_videos_repeats_short_source_in_ffmpeg(self):
+        """Fonte curta sem transição deve repetir segmentos no FFmpeg."""
+
+        class _FakeAudioClip:
+            duration = 4.0
+
+            def close(self):
+                pass
+
+        captured = {}
+
+        def capture_ffmpeg(**kwargs):
+            captured.update(kwargs)
+            return True
+
+        with (
+            patch.object(vd, "AudioFileClip", return_value=_FakeAudioClip()),
+            patch.object(vd, "_read_video_metadata", return_value=(4.0, 1080, 1920)),
+            patch.object(
+                vd,
+                "_prioritize_unique_source_clips",
+                side_effect=lambda subclipped_items, concat_mode: subclipped_items,
+            ),
+            patch.object(
+                vd,
+                "_try_combine_source_clips_with_ffmpeg",
+                side_effect=capture_ffmpeg,
+            ),
+        ):
+            vd.combine_videos(
+                combined_video_path="/tmp/short-source.mp4",
+                video_paths=["clip.mp4"],
+                audio_file="audio.mp3",
+                video_concat_mode=vd.VideoConcatMode.random,
+                video_transition_mode=None,
+                max_clip_duration=2,
+            )
+
+        source_clips = captured["source_clips"]
+        self.assertEqual(
+            [(clip.start_time, clip.end_time) for clip in source_clips],
+            [(0, 2), (2, 4), (0, 2)],
+        )
+        self.assertTrue(captured["sequential"])
+
+    def test_combine_videos_keeps_motion_transition_at_slow_speed(self):
+        """Transição determinística com slow motion também deve usar FFmpeg."""
+
+        class _FakeAudioClip:
+            duration = 4.0
+
+            def close(self):
+                pass
+
+        captured = {}
+
+        def capture_ffmpeg(**kwargs):
+            captured.update(kwargs)
+            return True
+
+        with (
+            patch.object(vd, "AudioFileClip", return_value=_FakeAudioClip()),
+            patch.object(vd, "_read_video_metadata", return_value=(4.0, 1080, 1920)),
+            patch.object(
+                vd,
+                "_prioritize_unique_source_clips",
+                side_effect=lambda subclipped_items, concat_mode: subclipped_items,
+            ),
+            patch.object(
+                vd,
+                "_try_combine_source_clips_with_ffmpeg",
+                side_effect=capture_ffmpeg,
+            ),
+        ):
+            vd.combine_videos(
+                combined_video_path="/tmp/slow-slide.mp4",
+                video_paths=["clip.mp4"],
+                audio_file="audio.mp3",
+                video_concat_mode=vd.VideoConcatMode.random,
+                video_transition_mode=vd.VideoTransitionMode.slide_in,
+                max_clip_duration=2,
+                clip_speed=0.5,
+            )
+
+        self.assertEqual(captured["clip_speed"], 0.5)
+        self.assertEqual(
+            captured["transition_value"], vd.VideoTransitionMode.slide_in.value
+        )
 
     def test_combine_videos_slow_speed_keeps_source_timeline_continuous(self):
         """0.5 倍慢放应连续读取 1.5 秒源片段，不能跳过中间画面。"""

@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -21,13 +23,14 @@ from pydantic import BaseModel, Field
 
 from app.config import config
 from app.controllers import base
+from app.models import const
 from app.models.schema import (
     MaterialInfo,
     VideoParams,
     VideoScriptRequest,
     VideoTermsRequest,
 )
-from app.services import bgm, material_upload, studio, webui_task
+from app.services import bgm, cancellation, material_upload, studio, webui_task
 from app.utils import file_security, utils
 
 _sessions: dict[str, tuple[float, str]] = {}
@@ -145,7 +148,13 @@ def save_settings(changes: dict):
 
 
 @router.get("/voices")
-def voices(provider: str = "azure-tts-v1"):
+def voices(provider: str = "azure-tts-v1", language_code: str = "", refresh: bool = False):
+    if provider == "gemini-tts":
+        from app.services import voice
+
+        if language_code and not re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?", language_code):
+            raise ValueError("invalid voice language/region code")
+        return voice.get_gemini_voice_options(language_code, refresh)
     return {"voices": studio.voices(provider)}
 
 
@@ -265,6 +274,13 @@ def music(name: str):
     return FileResponse(bgm.resolve_bgm_file(name))
 
 
+@router.get("/fonts/{name}")
+def font(name: str):
+    if Path(name).name != name or Path(name).suffix.lower() not in {".ttf", ".ttc", ".otf"}:
+        raise ValueError("invalid font")
+    return FileResponse(file_security.resolve_path_within_directory(utils.font_dir(), name))
+
+
 @router.post("/transcription")
 def transcription(body: dict):
     from app.services import subtitle
@@ -272,6 +288,12 @@ def transcription(body: dict):
     audio = _bounded_reference(body.get("id"))
     if not audio:
         raise ValueError("upload prompt audio first")
+    provider = config.app.get("subtitle_provider", "edge")
+    if provider == "gemini":
+        with tempfile.TemporaryDirectory(prefix="gemini-transcript-") as temp_dir:
+            audio_file = Path(temp_dir) / "reference.wav"
+            audio_file.write_bytes(audio)
+            return {"text": subtitle.create_gemini(str(audio_file))}
     if subtitle.WhisperModel is None:
         raise ValueError("Install transcription support with: uv sync --extra whisper")
     return {"text": subtitle.transcribe_audio_bytes(audio)}
@@ -363,6 +385,12 @@ def generate(body: Generation):
     params = validate_params(body.params.model_copy(deep=True))
     check_speech_runtime(params, uploaded_narration=bool(body.narration_id))
     if (
+        params.subtitle_enabled
+        and config.app.get("subtitle_provider") == "gemini"
+        and not (config.app.get("gemini_api_key") or os.getenv("GEMINI_API_KEY"))
+    ):
+        raise ValueError("Configure the Gemini API key under Transcription & Subtitles")
+    if (
         params.video_source
         in {"wavespeed", "volcengine_seedance", "ofox", "metaso_minimax", "muapi"}
         and not body.paid_source_confirmed
@@ -449,6 +477,15 @@ def delete_task(task_id: str):
     return {"deleted": True}
 
 
+@router.post("/tasks/{task_id}/cancel")
+def cancel_task(task_id: str):
+    detail = studio.task_detail(task_id)
+    if detail["state"] == const.TASK_STATE_PROCESSING:
+        if not cancellation.request(task_id):
+            raise RuntimeError("generation worker is not available in this process")
+    return studio.task_detail(task_id)
+
+
 @router.get("/tasks/{task_id}/files/{filename}")
 def task_file(task_id: str, filename: str, download: bool = False):
     if Path(filename).name != filename or "\\" in filename:
@@ -504,7 +541,7 @@ def export_keys():
     response = JSONResponse(studio.key_backup())
     response.headers["Cache-Control"] = "no-store"
     response.headers["Content-Disposition"] = (
-        'attachment; filename="moneyprinterturbo-keys.json"'
+        'attachment; filename="moneymachine-keys.json"'
     )
     return response
 

@@ -1,6 +1,6 @@
-# Lightweight Studio
+# MoneyMachine Studio
 
-This fork replaces the default Streamlit UI with a static Svelte/TypeScript application served by FastAPI. There is one Python server, no production Node process, and no Python reruns when editing a form or changing stages. The existing API and CLI remain available.
+MoneyMachine replaces the default Streamlit UI with a static Svelte/TypeScript application served by FastAPI. There is one Python server, no production Node process, and no Python reruns when editing a form or changing stages. The existing API and CLI remain available.
 
 Local measurements and their limits are recorded in [performance.md](performance.md). The desktop/mobile UI review informed the control-border contrast and mobile action-bar layout; the design contract is in [DESIGN.md](../DESIGN.md).
 
@@ -60,6 +60,7 @@ Install optional Python runtimes in a derived image when required. Existing task
 - **Sound:** every TTS provider, sample and full narration preview, uploaded/silent narration, VoxCPM reference/prompt audio, music selection/upload/generation and mixing levels.
 - **Subtitles:** fonts, placement, text/background/outline, sentence or word-by-word display and animation. The lightweight browser sample previews layout; final rendering uses the existing video engine.
 - **Output/history:** task status/logs, publishing status, media attribution, native playback/range downloads, restore/delete and local open actions. Headless machines return the relative artifact location instead of opening desktop apps.
+  While a video is generating, **Stop Generation** asks for confirmation before requesting cancellation. The monitor shows **Cancelling** until the worker exits, then **Cancelled**. FFmpeg renders and MoviePy frame loops stop cooperatively; an external provider request already in flight may finish or time out and may still be charged. Completed files are kept; interrupted renders are removed. Cancellation does not stop publishing a video that already finished.
 - **Settings/help:** all provider and render settings, model discovery/manual models, endpoint selection, masked credentials, preset/key import/export, cache inspection/cleanup, version check and onboarding.
 
 Voice cloning reference/prompt audio is held only in a bounded process-local cache for 30 minutes, not in task history or presets. Upload it again after expiry/restart. Restoring a task does not silently reuse private reference audio. Credential backups contain secrets by design; store them privately. Ordinary settings reads return only configured/not-configured indicators.
@@ -70,9 +71,11 @@ Paid execution is never performed as a migration test. Mocked tests verify confi
 
 Settings are grouped by function: script AI, video/images, narration, transcription/subtitles, music and social publishing. Each group shows its own provider and credentials. Switching categories keeps unsaved edits; only **Save Settings** writes them. **Advanced** retains the original technical configuration fields.
 
-For Google-generated voice, choose **Sound → Voice Provider → Google Gemini**, then **Configure Narration AI** to enter the Gemini API key and save. Return to Sound to choose a voice and request a sample. Gemini narration shares the Gemini script key, not the video or music keys. The existing voice integration uses `gemini-2.5-flash-preview-tts`.
+For Google-generated voice, choose **Sound → Voice Provider → Google Gemini**, then **Configure Narration AI** to enter the Gemini API key and select a TTS model. Return to Sound to choose a voice and request a sample. Gemini narration shares the Gemini script key. The default is `gemini-2.5-flash-preview-tts`; Gemini 2.5 Pro and Gemini 3.8 Flash/Flash-Lite are also available. Gemini 2.5 shows its 30 multilingual voices. Gemini 3.8 shows the extended Google voice library, filtered by the selected language and region (Brazilian Portuguese by default).
 
-Whisper is local speech-to-text under **Transcription & Subtitles**, not a voice generator. **Music** separates local/uploaded tracks from Sonilo and ElevenLabs AI music. ElevenLabs voice and music share one account key but have distinct model settings.
+Under **Transcription & Subtitles**, choose Whisper for local speech-to-text or Gemini 3.5 Transcribe for online transcription with timed subtitles. Gemini uses the same Google API key as Google narration and Lyria music; the narration audio is uploaded to Google's Files API for transcription. Whisper is not a voice generator. **Music** separates local/uploaded tracks from Sonilo, ElevenLabs and Google Lyria AI music. ElevenLabs voice and music share one account key but have distinct model settings.
+
+To use Google Lyria 3.5 for background music, choose **Music → Google Lyria 3.5**, enter your Gemini API key, and save. In **Sound**, select Lyria and optionally describe the music. An empty music prompt uses the video's subject and requests an instrumental track. Lyria receives text rather than the video itself, so its duration is approximate; the video mixer fits the returned MP3 to the final video. The same Gemini key can be used for scripts and narration. No music is requested when the background music volume is zero.
 
 ## Development and checks
 

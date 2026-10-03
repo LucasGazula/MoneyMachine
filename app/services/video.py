@@ -39,6 +39,7 @@ from app.models.schema import (
     VideoTransitionMode,
 )
 from app.services import bgm as bgm_service
+from app.services import cancellation
 from app.services.utils import video_effects
 from app.utils import file_security, utils
 
@@ -398,7 +399,7 @@ def _fallback_write_videofile(clip, output_file: str, failed_codec: str, reason:
     文件被占用、目录权限、杀软拦截等通用 IO 问题。只有 libx264 能成功写出时，
     才能判断原始失败大概率来自硬件编码器本身，避免误伤后续任务。
     """
-    clip.write_videofile(output_file, codec=_DEFAULT_VIDEO_CODEC, **kwargs)
+    _write_videofile_with_codec_fallback(clip, output_file, codec=_DEFAULT_VIDEO_CODEC, **kwargs)
     _disable_runtime_video_codec(failed_codec, reason)
     return _DEFAULT_VIDEO_CODEC
 
@@ -410,6 +411,8 @@ def _write_videofile_with_codec_fallback(clip, output_file: str, codec: str, **k
     硬件编码器是否可用不仅取决于 FFmpeg，还取决于显卡、驱动和当前运行环境。
     生成任务不能因为高级编码器不可用而整体失败，所以这里把回退集中处理。
     """
+    cancellation.check()
+    kwargs["logger"] = cancellation.moviepy_logger()
     effective_codec = _get_effective_video_codec(codec)
     try:
         clip.write_videofile(output_file, codec=effective_codec, **kwargs)
@@ -424,6 +427,10 @@ def _write_videofile_with_codec_fallback(clip, output_file: str, codec: str, **k
             reason=str(exc),
             **kwargs,
         )
+    except cancellation.TaskCancelled:
+        if os.path.isfile(output_file):
+            os.unlink(output_file)
+        raise
 
 
 def _escape_ffmpeg_concat_path(file_path: str) -> str:
@@ -474,7 +481,11 @@ def _run_concat_with_heartbeat(command: list[str], output_file: str):
     reporter = threading.Thread(target=log_heartbeat, daemon=True)
     reporter.start()
     try:
-        return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+        return cancellation.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    except cancellation.TaskCancelled:
+        if os.path.isfile(output_file):
+            os.unlink(output_file)
+        raise
     finally:
         stop_event.set()
 
@@ -503,11 +514,18 @@ def concat_video_clips_with_ffmpeg(
             concat_list_file,
             "-c:v",
             codec,
-            "-threads",
-            str(threads or 2),
-            "-pix_fmt",
-            "yuv420p",
         ]
+        if codec != "copy":
+            if codec == _DEFAULT_VIDEO_CODEC:
+                command.extend(["-preset", "veryfast"])
+            command.extend(
+                [
+                    "-threads",
+                    str(threads or 2),
+                    "-pix_fmt",
+                    "yuv420p",
+                ]
+            )
         if max_duration is not None and max_duration > 0:
             command.extend(["-t", f"{max_duration:.3f}"])
         command.append(output_file)
@@ -525,6 +543,13 @@ def concat_video_clips_with_ffmpeg(
 
     try:
         effective_codec = _get_effective_video_codec()
+        if effective_codec == _DEFAULT_VIDEO_CODEC:
+            try:
+                run_concat("copy")
+                logger.info("concatenated clips without re-encoding")
+                return "copy"
+            except Exception as exc:
+                logger.debug(f"stream-copy concat unavailable, encoding instead: {exc}")
         try:
             return run_concat(effective_codec)
         except Exception as exc:
@@ -535,6 +560,553 @@ def concat_video_clips_with_ffmpeg(
             return result_codec
     finally:
         delete_files(concat_list_file)
+
+
+def _try_combine_source_clips_with_ffmpeg(
+    source_clips: List[SubClippedVideoClip],
+    output_file: str,
+    video_width: int,
+    video_height: int,
+    video_fit_mode: VideoFitMode,
+    audio_duration: float,
+    threads: int,
+    sequential: bool = False,
+    transition_value: str | None = None,
+    clip_speed: float = 1.0,
+    transition_sides: list[str] | None = None,
+    transition_values: list[str | None] | None = None,
+) -> bool:
+    """Render source segments, speed changes, and deterministic transitions in FFmpeg."""
+    if not source_clips:
+        return False
+    if clip_speed <= 0:
+        return False
+    supported_transitions = (
+        None,
+        VideoTransitionMode.fade_in.value,
+        VideoTransitionMode.fade_out.value,
+        VideoTransitionMode.slide_in.value,
+        VideoTransitionMode.slide_out.value,
+        VideoTransitionMode.zoom_in.value,
+        VideoTransitionMode.zoom_out.value,
+    )
+    if transition_value not in (*supported_transitions, VideoTransitionMode.shuffle.value):
+        return False
+    if transition_values is not None and (
+        len(transition_values) != len(source_clips)
+        or any(value not in supported_transitions for value in transition_values)
+    ):
+        return False
+    effective_transition_values = transition_values or [
+        transition_value for _ in source_clips
+    ]
+    if transition_value == VideoTransitionMode.shuffle.value and transition_values is None:
+        return False
+    if sequential and any(
+        value not in (None, VideoTransitionMode.none.value)
+        for value in effective_transition_values
+    ):
+        return False
+    fit_mode = VideoFitMode(video_fit_mode)
+
+    def build_fit_filter() -> str:
+        if fit_mode == VideoFitMode.cover:
+            return (
+                f"scale={video_width}:{video_height}:"
+                "force_original_aspect_ratio=increase,"
+                f"crop={video_width}:{video_height}"
+            )
+        return (
+            f"scale={video_width}:{video_height}:"
+            "force_original_aspect_ratio=decrease,"
+            f"pad={video_width}:{video_height}:(ow-iw)/2:(oh-ih)/2:color=black"
+        )
+
+    fit_filter = build_fit_filter()
+    stream_copy_candidate = (
+        sequential
+        and all(
+            value in (None, VideoTransitionMode.none.value)
+            for value in effective_transition_values
+        )
+        and clip_speed == 1.0
+        and all(
+            source_clip.start_time in (None, 0) for source_clip in source_clips
+        )
+        and all(
+            source_clip.width == video_width
+            and source_clip.height == video_height
+            for source_clip in source_clips
+        )
+    )
+    concat_list_file = ""
+    if sequential:
+        concat_list_file = f"{output_file}.source-concat.txt"
+        try:
+            with open(concat_list_file, "w", encoding="utf-8") as file:
+                for source_clip in source_clips:
+                    start_time = max(0.0, float(source_clip.start_time or 0.0))
+                    end_time = max(
+                        start_time,
+                        float(source_clip.end_time or source_clip.duration),
+                    )
+                    file.write(
+                        f"file '{_format_ffmpeg_concat_path(source_clip.file_path)}'\n"
+                    )
+                    file.write(f"inpoint {start_time:.6f}\n")
+                    file.write(f"outpoint {end_time:.6f}\n")
+        except OSError as exc:
+            logger.warning(f"failed to prepare ffmpeg source concat list: {exc}")
+            delete_files(concat_list_file)
+            return False
+
+    def build_filter_graph() -> str:
+        filters = []
+        speed_filter = "" if clip_speed == 1.0 else f",setpts=PTS/{clip_speed:g}"
+        for index, source_clip in enumerate(source_clips):
+            start_time = max(0.0, float(source_clip.start_time or 0.0))
+            end_time = max(start_time, float(source_clip.end_time or source_clip.duration))
+            duration = max(0.0, end_time - start_time)
+            output_duration = duration / clip_speed
+            prepared_label = f"prepared{index}"
+            clip_transition_value = effective_transition_values[index]
+            if clip_transition_value == VideoTransitionMode.fade_in.value:
+                prepared_filter = ",fade=t=in:st=0:d=1"
+            elif clip_transition_value == VideoTransitionMode.fade_out.value:
+                fade_start = max(0.0, output_duration - 1.0)
+                prepared_filter = f",fade=t=out:st={fade_start:.6f}:d=1"
+            elif clip_transition_value in (
+                VideoTransitionMode.zoom_in.value,
+                VideoTransitionMode.zoom_out.value,
+            ):
+                progress = "min(t/{:.6f},1)".format(max(output_duration, 0.001))
+                if clip_transition_value == VideoTransitionMode.zoom_in.value:
+                    scale_factor = f"1+0.2*{progress}"
+                else:
+                    scale_factor = f"1.2-0.2*{progress}"
+                prepared_filter = (
+                    ",scale=w='ceil(iw*({factor})/2)*2':"
+                    "h='ceil(ih*({factor})/2)*2':eval=frame:flags=bilinear,"
+                    "crop={width}:{height}:(iw-ow)/2:(ih-oh)/2"
+                ).format(
+                    factor=scale_factor,
+                    width=video_width,
+                    height=video_height,
+                )
+            else:
+                prepared_filter = ""
+            filters.append(
+                f"[{index}:v]trim=start={start_time:.6f}:end={end_time:.6f},"
+                f"setpts=PTS-STARTPTS,{fit_filter}{speed_filter},fps={fps},setsar=1"
+                f"{prepared_filter}[{prepared_label}]"
+            )
+
+            if clip_transition_value in (
+                VideoTransitionMode.slide_in.value,
+                VideoTransitionMode.slide_out.value,
+            ):
+                side = (
+                    transition_sides[index]
+                    if transition_sides and index < len(transition_sides)
+                    else "left"
+                )
+                progress = "min(max(t/1,0),1)"
+                if clip_transition_value == VideoTransitionMode.slide_out.value:
+                    progress = f"min(max((t-{max(output_duration - 1.0, 0.0):.6f})/1,0),1)"
+                if side == "left":
+                    x_expression = (
+                        f"-W+W*{progress}"
+                        if clip_transition_value == VideoTransitionMode.slide_in.value
+                        else f"-w*{progress}"
+                    )
+                    y_expression = "0"
+                elif side == "right":
+                    x_expression = (
+                        f"W-W*{progress}"
+                        if clip_transition_value == VideoTransitionMode.slide_in.value
+                        else f"w*{progress}"
+                    )
+                    y_expression = "0"
+                elif side == "top":
+                    x_expression = "0"
+                    y_expression = (
+                        f"-H+H*{progress}"
+                        if clip_transition_value == VideoTransitionMode.slide_in.value
+                        else f"-h*{progress}"
+                    )
+                else:
+                    x_expression = "0"
+                    y_expression = (
+                        f"H-H*{progress}"
+                        if clip_transition_value == VideoTransitionMode.slide_in.value
+                        else f"h*{progress}"
+                    )
+                filters.extend(
+                    [
+                        f"color=c=black:s={video_width}x{video_height}:r={fps}:"
+                        f"d={output_duration:.6f}[background{index}]",
+                        f"[background{index}][{prepared_label}]overlay="
+                        f"x='{x_expression}':y='{y_expression}':shortest=1[v{index}]",
+                    ]
+                )
+
+        inputs = "".join(
+            (
+                f"[v{index}]"
+                if value
+                in (
+                    VideoTransitionMode.slide_in.value,
+                    VideoTransitionMode.slide_out.value,
+                )
+                else f"[prepared{index}]"
+            )
+            for index, value in enumerate(effective_transition_values)
+        )
+        filters.append(f"{inputs}concat=n={len(source_clips)}:v=1:a=0[outv]")
+        return ";".join(filters)
+
+    filter_graph = "" if sequential else build_filter_graph()
+
+    def build_command(codec: str) -> list[str]:
+        command = [utils.get_ffmpeg_binary(), "-y"]
+        if sequential:
+            command.extend(["-f", "concat", "-safe", "0", "-i", concat_list_file])
+        else:
+            for source_clip in source_clips:
+                command.extend(["-i", source_clip.file_path])
+        if stream_copy_candidate and codec == "copy":
+            command.extend(
+                [
+                    "-an",
+                    "-c:v",
+                    "copy",
+                    "-t",
+                    f"{audio_duration:.3f}",
+                    output_file,
+                ]
+            )
+            return command
+        output_filters = (
+            [
+                "-vf",
+                f"{fit_filter}"
+                + (f",setpts=PTS/{clip_speed:g}" if clip_speed != 1.0 else "")
+                + f",fps={fps},setsar=1",
+            ]
+            if sequential
+            else ["-filter_complex", filter_graph, "-map", "[outv]"]
+        )
+        command.extend(
+            [
+                *output_filters,
+                "-an",
+                "-c:v",
+                codec,
+            ]
+        )
+        if codec == _DEFAULT_VIDEO_CODEC:
+            command.extend(["-preset", "veryfast"])
+        command.extend(
+            [
+                "-threads",
+                str(threads or 2),
+                "-pix_fmt",
+                "yuv420p",
+                "-t",
+                f"{audio_duration:.3f}",
+                output_file,
+            ]
+        )
+        return command
+
+    def run(codec: str):
+        result = _run_concat_with_heartbeat(build_command(codec), output_file)
+        if result.returncode != 0:
+            error_message = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(error_message or "ffmpeg source concat failed")
+
+    try:
+        if stream_copy_candidate:
+            try:
+                run("copy")
+                logger.info(
+                    f"combined {len(source_clips)} source clips without re-encoding"
+                )
+                return True
+            except Exception as exc:
+                logger.debug(f"source stream-copy concat unavailable, encoding instead: {exc}")
+
+        effective_codec = _get_effective_video_codec()
+        try:
+            run(effective_codec)
+            logger.info(
+                f"combined {len(source_clips)} source clips in one ffmpeg pass"
+            )
+            return True
+        except Exception as exc:
+            if effective_codec == _DEFAULT_VIDEO_CODEC:
+                logger.warning(f"ffmpeg source concat failed, using MoviePy fallback: {exc}")
+                return False
+            try:
+                run(_DEFAULT_VIDEO_CODEC)
+                _disable_runtime_video_codec(effective_codec, str(exc))
+                logger.info(
+                    f"combined {len(source_clips)} source clips in one ffmpeg pass"
+                )
+                return True
+            except Exception as fallback_exc:
+                logger.warning(
+                    "ffmpeg source concat fallback failed, using MoviePy fallback: "
+                    f"{fallback_exc}"
+                )
+                return False
+    finally:
+        if concat_list_file:
+            delete_files(concat_list_file)
+
+
+def _ass_color(value: str | None, fallback: str) -> str:
+    """Convert a #RRGGBB color to the BGR form used by ASS/libass."""
+    color = str(value or fallback).lstrip("#")
+    if len(color) != 6:
+        color = fallback.lstrip("#")
+    try:
+        int(color, 16)
+    except ValueError:
+        color = fallback.lstrip("#")
+    return f"&H00{color[4:6]}{color[2:4]}{color[0:2]}"
+
+
+def _escape_ffmpeg_filter_path(value: str) -> str:
+    return str(value).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+
+
+def _ffmpeg_subtitle_filter(
+    subtitle_path: str,
+    font_path: str,
+    params: VideoParams,
+    video_height: int,
+) -> str:
+    video_width, _ = VideoAspect(params.video_aspect).to_resolution()
+    position = getattr(params, "subtitle_position", "bottom")
+    alignment = {"bottom": 2, "top": 8, "center": 5}[position]
+    margin = int(video_height * 0.05) if alignment in (2, 8) else 0
+    horizontal_margin = int(video_width * 0.05)
+    font_name = os.path.splitext(os.path.basename(font_path))[0]
+    font_weight = (
+        1
+        if any(
+            weight in font_name.lower()
+            for weight in ("bold", "semibold", "demibold", "black")
+        )
+        else 0
+    )
+    background_color = getattr(params, "text_background_color", False)
+    if isinstance(background_color, bool):
+        background_color = "#000000" if background_color else ""
+    common_style_parts = [
+        f"FontName={font_name}",
+        f"FontSize={int(params.font_size)}",
+        f"PlayResX={video_width}",
+        f"PlayResY={video_height}",
+        f"Alignment={alignment}",
+        f"MarginL={horizontal_margin}",
+        f"MarginR={horizontal_margin}",
+        f"MarginV={margin}",
+        f"Bold={font_weight}",
+    ]
+
+    def render(style_parts: list[str]) -> str:
+        style = ",".join(style_parts)
+        return (
+            f"subtitles={_escape_ffmpeg_filter_path(subtitle_path)}:"
+            f"fontsdir={_escape_ffmpeg_filter_path(os.path.dirname(font_path))}:"
+            f"force_style='{style}'"
+        )
+
+    if background_color:
+        # ASS BorderStyle=3 uses OutlineColour as the opaque box color. Render
+        # that box once, then render the text again to preserve its configured
+        # outline color. Both passes stay inside FFmpeg/libass, avoiding
+        # MoviePy/Pillow's full-frame Python compositing. Rounded boxes are
+        # rejected by the caller because libass cannot reproduce their shape.
+        background_ass_color = _ass_color(background_color, '#000000')
+        stroke_ass_color = _ass_color(params.stroke_color, '#000000')
+        if background_ass_color == stroke_ass_color:
+            return render(
+                common_style_parts
+                + [
+                    "PrimaryColour="
+                    f"{_ass_color(params.text_fore_color, '#FFFFFF')}",
+                    f"OutlineColour={background_ass_color}",
+                    f"Outline={max(1, int(params.font_size * 0.4))}",
+                    "BorderStyle=3",
+                    "Shadow=0",
+                ]
+            )
+
+        background_style = common_style_parts + [
+            "PrimaryColour=&HFF000000",
+            f"OutlineColour={background_ass_color}",
+            f"Outline={max(1, int(params.font_size * 0.4))}",
+            "BorderStyle=3",
+            "Shadow=0",
+        ]
+        foreground_style = common_style_parts + [
+            f"PrimaryColour={_ass_color(params.text_fore_color, '#FFFFFF')}",
+            f"OutlineColour={_ass_color(params.stroke_color, '#000000')}",
+            f"Outline={max(0, int(params.stroke_width))}",
+            "BorderStyle=1",
+            "Shadow=0",
+        ]
+        return ",".join(
+            (render(background_style), render(foreground_style))
+        )
+
+    return render(
+        common_style_parts
+        + [
+            "WrapStyle=1",
+            f"PrimaryColour={_ass_color(params.text_fore_color, '#FFFFFF')}",
+            f"OutlineColour={_ass_color(params.stroke_color, '#000000')}",
+            f"Outline={max(0, int(params.stroke_width))}",
+            "BorderStyle=1",
+            "Shadow=0",
+        ]
+    )
+
+
+def _try_generate_video_with_ffmpeg(
+    video_path: str,
+    audio_path: str,
+    subtitle_path: str,
+    output_file: str,
+    params: VideoParams,
+    font_path: str,
+    video_height: int,
+    bgm_file: str | None = None,
+) -> bool | None:
+    """Use FFmpeg for simple subtitles or a direct audio/video mux."""
+    subtitle_filter = None
+    if subtitle_path and os.path.isfile(subtitle_path):
+        if (
+            not font_path
+            or getattr(params, "rounded_subtitle_background", False)
+            or getattr(params, "subtitle_animation", "none") != "none"
+            or getattr(params, "subtitle_position", "bottom")
+            not in {"top", "center", "bottom"}
+            or not os.path.isfile(font_path)
+        ):
+            return None
+        subtitle_filter = _ffmpeg_subtitle_filter(
+            subtitle_path, font_path, params, video_height
+        )
+
+    if bgm_file is not None:
+        if not os.path.isfile(bgm_file):
+            return None
+        video_duration, _, _ = _read_video_metadata(video_path)
+    else:
+        video_duration = 0.0
+
+    codec = _get_effective_video_codec() if subtitle_filter else "copy"
+    ffmpeg_binary = utils.get_ffmpeg_binary()
+
+    def run(selected_codec: str):
+        audio_filters = []
+        voice_volume = float(params.voice_volume or 1.0)
+        if voice_volume != 1.0 and bgm_file is None:
+            audio_filters.append(f"volume={voice_volume:g}")
+        command = [
+            ffmpeg_binary,
+            "-hide_banner",
+            "-y",
+            "-i",
+            video_path,
+            "-i",
+            audio_path,
+        ]
+        if bgm_file is not None:
+            command.extend(["-stream_loop", "-1", "-i", bgm_file])
+            fade_start = max(0.0, video_duration - 3.0)
+            filter_complex = (
+                f"[1:a]volume={voice_volume:g}[voice];"
+                f"[2:a]volume={float(params.bgm_volume or 0):g},"
+                f"afade=t=out:st={fade_start:.3f}:d=3[bgm];"
+                "[voice][bgm]amix=inputs=2:duration=first:"
+                "dropout_transition=0[mixed]"
+            )
+            command.extend([
+                "-filter_complex",
+                filter_complex,
+                "-map",
+                "0:v:0",
+                "-map",
+                "[mixed]",
+            ])
+        else:
+            command.extend(["-map", "0:v:0", "-map", "1:a:0"])
+        if subtitle_filter:
+            command.extend([
+                "-vf",
+                subtitle_filter,
+                "-c:v",
+                selected_codec,
+            ])
+            if selected_codec == _DEFAULT_VIDEO_CODEC:
+                command.extend(["-preset", "veryfast"])
+            command.extend([
+                "-threads",
+                str(params.n_threads or 2),
+                "-pix_fmt",
+                "yuv420p",
+            ])
+        else:
+            command.extend(["-c:v", "copy"])
+        command.extend(["-c:a", audio_codec, "-b:a", audio_bitrate])
+        if audio_filters:
+            command.extend(["-af", ",".join(audio_filters)])
+        command.extend(
+            ["-t", f"{video_duration:.3f}", output_file]
+            if bgm_file is not None
+            else ["-shortest", output_file]
+        )
+        try:
+            return cancellation.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        except cancellation.TaskCancelled:
+            if os.path.isfile(output_file):
+                os.unlink(output_file)
+            raise
+
+    result = run(codec)
+    if result.returncode == 0:
+        logger.info(
+            "rendered video with FFmpeg"
+            + ("/libass" if subtitle_filter else "")
+            + (" and mixed BGM" if bgm_file is not None else "")
+            if subtitle_filter or bgm_file is not None
+            else "muxed video and audio with FFmpeg"
+        )
+        return True
+
+    if codec != _DEFAULT_VIDEO_CODEC:
+        fallback = run(_DEFAULT_VIDEO_CODEC)
+        if fallback.returncode == 0:
+            _disable_runtime_video_codec(codec, result.stderr or "ffmpeg subtitle render failed")
+            logger.info("rendered video with FFmpeg after codec fallback")
+            return True
+
+    logger.warning(
+        "FFmpeg subtitle fast path failed; falling back to MoviePy subtitle rendering"
+    )
+    return None
 
 
 def _sanitize_image_file(image_path: str) -> str:
@@ -631,6 +1203,42 @@ def close_clip(clip):
     
     del clip
     gc.collect()
+
+
+@lru_cache(maxsize=256)
+def _read_video_metadata_cached(
+    video_path: str,
+    modified_ns: int,
+    file_size: int,
+) -> tuple[float, int, int]:
+    """Read immutable source metadata once per file version."""
+    clip = _open_video_clip_quietly(video_path)
+    try:
+        duration = float(clip.duration)
+        width, height = (int(value) for value in clip.size)
+        return duration, width, height
+    finally:
+        close_clip(clip)
+
+
+def _read_video_metadata(video_path: str) -> tuple[float, int, int]:
+    try:
+        stat = os.stat(video_path)
+    except OSError:
+        # Test doubles and transient files may not have a stat entry; retain the
+        # existing uncached behavior for those callers.
+        clip = _open_video_clip_quietly(video_path)
+        try:
+            return float(clip.duration), *(int(value) for value in clip.size)
+        finally:
+            close_clip(clip)
+
+    return _read_video_metadata_cached(
+        video_path,
+        stat.st_mtime_ns,
+        stat.st_size,
+    )
+
 
 def delete_files(files: List[str] | str):
     if isinstance(files, str):
@@ -794,10 +1402,8 @@ def combine_videos(
     subclipped_items = []
     video_duration = 0
     for video_path in video_paths:
-        clip = _open_video_clip_quietly(video_path)
-        clip_duration = clip.duration
-        clip_w, clip_h = clip.size
-        close_clip(clip)
+        cancellation.check()
+        clip_duration, clip_w, clip_h = _read_video_metadata(video_path)
         
         start_time = 0
 
@@ -829,11 +1435,139 @@ def combine_videos(
         **({"source_usage": source_usage, "source_groups": source_groups}
            if source_usage is not None else {}),
     )
+
+    transition_values = None
+    transition_sides = None
+    if transition_value == VideoTransitionMode.shuffle.value:
+        transition_values = [
+            random.choice(
+                [
+                    VideoTransitionMode.fade_in.value,
+                    VideoTransitionMode.fade_out.value,
+                    VideoTransitionMode.slide_in.value,
+                    VideoTransitionMode.slide_out.value,
+                    VideoTransitionMode.zoom_in.value,
+                    VideoTransitionMode.zoom_out.value,
+                ]
+            )
+            for _ in subclipped_items
+        ]
+        transition_sides = [
+            random.choice(["left", "right", "top", "bottom"])
+            if value
+            in (
+                VideoTransitionMode.slide_in.value,
+                VideoTransitionMode.slide_out.value,
+            )
+            else "left"
+            for value in transition_values
+        ]
+    elif transition_value in (
+        VideoTransitionMode.slide_in.value,
+        VideoTransitionMode.slide_out.value,
+    ):
+        transition_sides = [
+            random.choice(["left", "right", "top", "bottom"])
+            for _ in subclipped_items
+        ]
         
     logger.debug(f"total subclipped items: {len(subclipped_items)}")
-    
+
+    # Plain segments do not need one MoviePy process per clip plus a second
+    # concatenation pass. Render the selected source ranges in one FFmpeg graph;
+    # Unsupported transitions and FFmpeg failures keep the established MoviePy
+    # path below.
+    direct_transition_supported = transition_value in (
+        None,
+        VideoTransitionMode.none.value,
+        VideoTransitionMode.fade_in.value,
+        VideoTransitionMode.fade_out.value,
+        VideoTransitionMode.slide_in.value,
+        VideoTransitionMode.slide_out.value,
+        VideoTransitionMode.zoom_in.value,
+        VideoTransitionMode.zoom_out.value,
+        VideoTransitionMode.shuffle.value,
+    )
+    if direct_transition_supported:
+        direct_items = []
+        direct_duration = 0.0
+        for subclipped_item in subclipped_items:
+            if direct_duration >= required_video_duration:
+                break
+            direct_items.append(subclipped_item)
+            direct_duration += subclipped_item.duration / normalized_clip_speed
+
+        direct_transition_sides = (
+            transition_sides[:len(direct_items)] if transition_sides else None
+        )
+        direct_transition_values = (
+            transition_values[:len(direct_items)] if transition_values else None
+        )
+        # A short source set is already looped by the MoviePy fallback below.
+        # Repeat the selected source ranges here instead, so deterministic
+        # transitions also stay in the single FFmpeg pass.
+        if (
+            direct_items
+            and direct_duration < required_video_duration
+            and direct_transition_supported
+        ):
+            base_items = direct_items.copy()
+            base_sides = (
+                direct_transition_sides.copy()
+                if direct_transition_sides
+                else None
+            )
+            base_transition_values = (
+                direct_transition_values.copy()
+                if direct_transition_values
+                else None
+            )
+            for repeat_index, subclipped_item in enumerate(itertools.cycle(base_items)):
+                if direct_duration >= required_video_duration:
+                    break
+                direct_items.append(subclipped_item)
+                direct_duration += subclipped_item.duration / normalized_clip_speed
+                if base_sides is not None:
+                    direct_transition_sides.append(
+                        base_sides[repeat_index % len(base_sides)]
+                    )
+                if base_transition_values is not None:
+                    direct_transition_values.append(
+                        base_transition_values[
+                            repeat_index % len(base_transition_values)
+                        ]
+                    )
+
+        if direct_duration >= required_video_duration:
+            if _try_combine_source_clips_with_ffmpeg(
+                source_clips=direct_items,
+                output_file=combined_video_path,
+                video_width=video_width,
+                video_height=video_height,
+                video_fit_mode=fit_mode,
+                audio_duration=audio_duration,
+                threads=threads,
+                sequential=(
+                    transition_value in (None, VideoTransitionMode.none.value)
+                ),
+                transition_value=transition_value,
+                clip_speed=normalized_clip_speed,
+                transition_sides=direct_transition_sides,
+                transition_values=direct_transition_values,
+            ):
+                if used_video_paths is not None:
+                    elapsed = 0.0
+                    for clip in direct_items:
+                        if elapsed >= audio_duration:
+                            break
+                        used_video_paths.append(clip.source_file_path)
+                        elapsed += clip.duration / normalized_clip_speed
+                logger.info("video combining completed")
+                return combined_video_path
+
     # Add downloaded clips over and over until the duration of the audio (max_duration) has been reached
     for i, subclipped_item in enumerate(subclipped_items):
+        cancellation.check()
         if video_duration >= required_video_duration:
             break
         
@@ -873,22 +1607,31 @@ def combine_videos(
                     fit_mode=fit_mode,
                 )
 
-            shuffle_side = random.choice(["left", "right", "top", "bottom"])
-            if transition_value in (None, VideoTransitionMode.none.value):
+            shuffle_side = (
+                transition_sides[i]
+                if transition_sides is not None and i < len(transition_sides)
+                else random.choice(["left", "right", "top", "bottom"])
+            )
+            clip_transition_value = (
+                transition_values[i]
+                if transition_values is not None and i < len(transition_values)
+                else transition_value
+            )
+            if clip_transition_value in (None, VideoTransitionMode.none.value):
                 clip = clip
-            elif transition_value == VideoTransitionMode.fade_in.value:
+            elif clip_transition_value == VideoTransitionMode.fade_in.value:
                 clip = video_effects.fadein_transition(clip, 1)
-            elif transition_value == VideoTransitionMode.fade_out.value:
+            elif clip_transition_value == VideoTransitionMode.fade_out.value:
                 clip = video_effects.fadeout_transition(clip, 1)
-            elif transition_value == VideoTransitionMode.slide_in.value:
+            elif clip_transition_value == VideoTransitionMode.slide_in.value:
                 clip = video_effects.slidein_transition(clip, 1, shuffle_side)
-            elif transition_value == VideoTransitionMode.slide_out.value:
+            elif clip_transition_value == VideoTransitionMode.slide_out.value:
                 clip = video_effects.slideout_transition(clip, 1, shuffle_side)
-            elif transition_value == VideoTransitionMode.zoom_in.value:
+            elif clip_transition_value == VideoTransitionMode.zoom_in.value:
                 clip = video_effects.zoomin_transition(clip, 1)
-            elif transition_value == VideoTransitionMode.zoom_out.value:
+            elif clip_transition_value == VideoTransitionMode.zoom_out.value:
                 clip = video_effects.zoomout_transition(clip, 1)
-            elif transition_value == VideoTransitionMode.shuffle.value:
+            elif clip_transition_value == VideoTransitionMode.shuffle.value:
                 transition_funcs = [
                     lambda c: video_effects.fadein_transition(c, 1),
                     lambda c: video_effects.fadeout_transition(c, 1),
@@ -928,6 +1671,9 @@ def combine_videos(
             )
             video_duration += clip_duration_saved
             
+        except cancellation.TaskCancelled:
+            close_clip(clip)
+            raise
         except Exception as e:
             logger.error(f"failed to process clip: {str(e)}")
     
@@ -1428,6 +2174,30 @@ def generate_video(
             _clip = _clip.with_position(("center", "center"))
         return _clip
 
+    bgm_enabled = bgm_service.should_use_bgm(params.bgm_type, params.bgm_volume)
+    bgm_file = ""
+    if bgm_enabled and bgm_file_override != "":
+        bgm_file = (
+            bgm_file_override
+            if bgm_file_override is not None
+            else get_bgm_file(
+                bgm_type=params.bgm_type,
+                bgm_file=params.bgm_file,
+            )
+        )
+
+    if _try_generate_video_with_ffmpeg(
+        video_path=video_path,
+        audio_path=audio_path,
+        subtitle_path=subtitle_path,
+        output_file=output_file,
+        params=params,
+        font_path=font_path,
+        video_height=video_height,
+        bgm_file=bgm_file or None,
+    ):
+        return True
+
     # MoviePy 的 CompositeAudioClip.close() 不会关闭子 AudioFileClip。这里用
     # ExitStack 显式持有所有原始文件 reader，确保成功、字幕异常、混音失败和
     # 视频写入失败等路径都能释放 FFmpeg 子进程，尤其避免 Windows 文件被占用。
@@ -1463,9 +2233,6 @@ def generate_video(
             video_clip = CompositeVideoClip([video_clip, *text_clips])
             clip_stack.callback(video_clip.close)
 
-        bgm_enabled = bgm_service.should_use_bgm(
-            params.bgm_type, params.bgm_volume
-        )
         if not bgm_enabled and params.bgm_type:
             # 所有 BGM 来源共用这一条短路规则。音量不大于 0 时不能解析随机或
             # 自定义文件，也不能加载提供商返回的文件，避免无意义的 IO 和混音。
@@ -1476,28 +2243,14 @@ def generate_video(
 
         # 提供商配乐可由任务编排层直接传入对应文件。None 表示沿用随机/自定义
         # BGM 解析，空字符串明确禁用本条 BGM；但任何来源都必须先通过通用音量规则。
-        bgm_file = ""
-        if bgm_enabled:
-            bgm_file = (
-                bgm_file_override
-                if bgm_file_override is not None
-                else get_bgm_file(
-                    bgm_type=params.bgm_type,
-                    bgm_file=params.bgm_file,
-                )
-            )
         bgm_mix_succeeded = True
         if bgm_file:
             try:
                 bgm_effects = [
+                    afx.AudioLoop(duration=video_clip.duration),
                     afx.MultiplyVolume(params.bgm_volume),
                     afx.AudioFadeOut(3),
                 ]
-                # 服务内解析的随机/自定义音乐可能比成片短，需要循环铺满；任务层
-                # 通过 override 传入的文件表示提供商已经完成时长适配。这里依据
-                # 文件来源决定是否循环，避免今后每增加一个提供商都修改名称白名单。
-                if bgm_file_override is None:
-                    bgm_effects.append(afx.AudioLoop(duration=video_clip.duration))
                 bgm_source_clip = clip_stack.enter_context(AudioFileClip(bgm_file))
                 bgm_clip = bgm_source_clip.with_effects(bgm_effects)
                 audio_clip = CompositeAudioClip([audio_clip, bgm_clip])
@@ -1556,7 +2309,7 @@ def render_image_zoom_video(image_path: str, clip_duration: int = 5) -> str:
         try:
             # Output the video to a file.
             video_file = f"{image_path}.mp4"
-            final_clip.write_videofile(video_file, fps=30, logger=None)
+            _write_videofile_with_codec_fallback(final_clip, video_file, codec=_DEFAULT_VIDEO_CODEC, fps=30)
             return video_file
         finally:
             close_clip(final_clip)

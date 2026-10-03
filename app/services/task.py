@@ -2,6 +2,7 @@ import json
 import math
 import os
 import re
+import shutil
 import socket
 import threading
 import time
@@ -15,10 +16,12 @@ from loguru import logger
 
 from app.config import config
 from app.models import const
-from app.models.schema import VideoConcatMode, VideoParams
+from app.models.schema import VideoConcatMode, VideoParams, VideoTransitionMode
 from app.services import bgm as bgm_service
+from app.services import cancellation
 from app.services import (
     elevenlabs_music,
+    lyria_music,
     loomloom,
     metaso_minimax,
     muapi,
@@ -93,7 +96,15 @@ _VIDEO_MUSIC_PROVIDERS = {
         "warning_code": "elevenlabs_bgm_failed",
         "display_name": "ElevenLabs",
     },
+    "lyria": {
+        "service": lyria_music,
+        "error_type": lyria_music.LyriaMusicError,
+        "suffix": ".mp3",
+        "warning_code": "lyria_bgm_failed",
+        "display_name": "Google Lyria",
+    },
 }
+_BATCH_MATERIAL_SOURCES = frozenset({"pexels", "pixabay", "coverr", "local"})
 
 
 def _get_video_music_prompt(params: VideoParams) -> str:
@@ -106,6 +117,12 @@ def _get_video_music_prompt(params: VideoParams) -> str:
     prompt = str(params.video_music_prompt or "").strip()
     if params.bgm_type == "sonilo" and not prompt:
         prompt = str(params.sonilo_bgm_prompt or "").strip()
+    if params.bgm_type == "lyria" and not prompt:
+        subject = str(params.video_subject or params.video_script or "this video").strip()
+        prompt = (
+            f"Instrumental background music for a video about {subject[:300]}. "
+            "No vocals."
+        )
     return prompt
 
 
@@ -611,7 +628,7 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
         logger.info("subtitle provider is empty, skip subtitle generation")
         return ""
 
-    if sub_maker is None and subtitle_provider != "whisper":
+    if sub_maker is None and subtitle_provider not in {"whisper", "gemini"}:
         # 自定义音频不会经过 TTS，因此没有 Edge/Azure 等 TTS 返回的
         # sub_maker 时间轴。只有 Whisper 可以直接从音频文件转写字幕；
         # 其他字幕提供方继续保持原有行为，避免生成错误的空时间轴。
@@ -650,6 +667,13 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
         if not is_word_level:
             logger.info("\n\n## correcting subtitle")
             subtitle.correct(subtitle_file=subtitle_path, video_script=video_script)
+
+    if subtitle_provider == "gemini":
+        subtitle.create_gemini(
+            audio_file=audio_file,
+            subtitle_file=subtitle_path,
+            word_level=is_word_level,
+        )
 
     subtitle_lines = subtitle.file_to_subtitles(subtitle_path)
     if not subtitle_lines:
@@ -747,6 +771,12 @@ def get_video_materials(
         # 顺序匹配模式只在用户显式开启时生效。这里强制素材下载按关键词顺序
         # 轮询，避免某个早期关键词下载太多素材，把后续脚本主题挤出最终时间线。
         try:
+            material_duration = (
+                audio_duration * params.video_count
+                if params.video_count > 1
+                and params.video_source in _BATCH_MATERIAL_SOURCES
+                else audio_duration
+            )
             downloaded_videos = material.download_videos(
                 task_id=task_id,
                 search_terms=video_terms,
@@ -757,7 +787,7 @@ def get_video_materials(
                     if params.match_materials_to_script
                     else params.video_concat_mode
                 ),
-                audio_duration=audio_duration * params.video_count,
+                audio_duration=material_duration,
                 max_clip_duration=params.video_clip_duration,
                 match_script_order=params.match_materials_to_script,
             )
@@ -904,9 +934,9 @@ def generate_final_videos(
     final_video_paths = []
     combined_video_paths = []
     warnings = []
-    allocate_batch_materials = params.video_count > 1 and params.video_source in {
-        "pexels", "pixabay", "coverr", "local"
-    }
+    allocate_batch_materials = (
+        params.video_count > 1 and params.video_source in _BATCH_MATERIAL_SOURCES
+    )
     source_usage = {}
     material_selections = []
     source_groups = (
@@ -928,12 +958,26 @@ def generate_final_videos(
     else:
         video_concat_mode = VideoConcatMode.random
     video_transition_mode = params.video_transition_mode
+    bgm_enabled = bgm_service.should_use_bgm(params.bgm_type, params.bgm_volume)
+    reuse_combined_video = (
+        params.video_count > 1
+        and params.match_materials_to_script
+        and not allocate_batch_materials
+        and getattr(video_transition_mode, "value", video_transition_mode)
+        in (None, VideoTransitionMode.none.value)
+    )
+    reuse_final_video = reuse_combined_video and (
+        not bgm_enabled or params.bgm_type in {"custom", "preset"}
+    )
+    first_final_video_path = ""
 
     _progress = 50
     for i in range(params.video_count):
+        cancellation.check()
         index = i + 1
         combined_video_path = path.join(
-            utils.task_dir(task_id), f"combined-{index}.mp4"
+            utils.task_dir(task_id),
+            "combined-1.mp4" if reuse_combined_video else f"combined-{index}.mp4",
         )
         logger.info(f"\n\n## combining video: {index} => {combined_video_path}")
         used_video_paths = []
@@ -945,19 +989,22 @@ def generate_final_videos(
             }
             if allocate_batch_materials else {}
         )
-        video.combine_videos(
-            combined_video_path=combined_video_path,
-            video_paths=downloaded_videos,
-            audio_file=audio_file,
-            video_aspect=params.video_aspect,
-            video_fit_mode=params.video_fit_mode,
-            video_concat_mode=video_concat_mode,
-            video_transition_mode=video_transition_mode,
-            max_clip_duration=params.video_clip_duration,
-            threads=params.n_threads,
-            clip_speed=params.video_clip_speed,
-            **batch_options,
-        )
+        if not reuse_combined_video or index == 1:
+            video.combine_videos(
+                combined_video_path=combined_video_path,
+                video_paths=downloaded_videos,
+                audio_file=audio_file,
+                video_aspect=params.video_aspect,
+                video_fit_mode=params.video_fit_mode,
+                video_concat_mode=video_concat_mode,
+                video_transition_mode=video_transition_mode,
+                max_clip_duration=params.video_clip_duration,
+                threads=params.n_threads,
+                clip_speed=params.video_clip_speed,
+                **batch_options,
+            )
+        else:
+            logger.info("reusing combined video for identical sync output")
         if allocate_batch_materials:
             selected_sources = list(dict.fromkeys(used_video_paths))
             reused_sources = [file for file in selected_sources if source_usage.get(file, 0)]
@@ -981,6 +1028,7 @@ def generate_final_videos(
                 })
 
         _progress += 50 / params.video_count / 2
+        cancellation.check()
         sm.state.update_task(task_id, progress=_progress)
 
         final_video_path = path.join(utils.task_dir(task_id), f"final-{index}.mp4")
@@ -1015,14 +1063,32 @@ def generate_final_videos(
                 warnings.append({"code": warning_code, "video_index": index})
 
         logger.info(f"\n\n## generating video: {index} => {final_video_path}")
-        bgm_mix_succeeded = video.generate_video(
-            video_path=combined_video_path,
-            audio_path=audio_file,
-            subtitle_path=subtitle_path,
-            output_file=final_video_path,
-            params=params,
-            bgm_file_override=bgm_file_override,
-        )
+        cancellation.check()
+        bgm_mix_succeeded = True
+        if reuse_final_video and index > 1 and first_final_video_path:
+            try:
+                shutil.copyfile(first_final_video_path, final_video_path)
+                logger.info("reusing final video for identical sync output")
+            except OSError:
+                bgm_mix_succeeded = video.generate_video(
+                    video_path=combined_video_path,
+                    audio_path=audio_file,
+                    subtitle_path=subtitle_path,
+                    output_file=final_video_path,
+                    params=params,
+                    bgm_file_override=bgm_file_override,
+                )
+        else:
+            bgm_mix_succeeded = video.generate_video(
+                video_path=combined_video_path,
+                audio_path=audio_file,
+                subtitle_path=subtitle_path,
+                output_file=final_video_path,
+                params=params,
+                bgm_file_override=bgm_file_override,
+            )
+        if reuse_final_video and index == 1:
+            first_final_video_path = final_video_path
         if (
             video_music_provider is not None
             and bgm_file_override
@@ -1521,6 +1587,7 @@ def _run_pipeline(
 
     # 1. Generate script
     video_script = generate_script(task_id, params)
+    cancellation.check()
     if not video_script or "Error: " in video_script:
         error = (
             video_script.removeprefix("Error: ").strip()
@@ -1548,6 +1615,7 @@ def _run_pipeline(
                 "failed to generate video search terms",
             )
 
+    cancellation.check()
     save_script_data(task_id, video_script, video_terms, params)
 
     if stop_at == "terms":
@@ -1574,6 +1642,7 @@ def _run_pipeline(
         video_script,
         **generate_audio_kwargs,
     )
+    cancellation.check()
     if not audio_file:
         return _mark_task_failed(
             task_id,
@@ -1596,6 +1665,7 @@ def _run_pipeline(
     subtitle_path = generate_subtitle(
         task_id, params, video_script, sub_maker, audio_file
     )
+    cancellation.check()
 
     if stop_at == "subtitle":
         sm.state.update_task(
@@ -1616,6 +1686,7 @@ def _run_pipeline(
         audio_duration,
         loomloom_video_request=loomloom_video_request,
     )
+    cancellation.check()
     if not downloaded_videos:
         return _mark_task_failed(
             task_id,
@@ -1651,6 +1722,7 @@ def _run_pipeline(
         )
     )
 
+    cancellation.check()
     if not final_video_paths:
         return _mark_task_failed(
             task_id,
@@ -1740,17 +1812,27 @@ def start(
     默认值，让自定义音频始终受当前任务目录约束。
     """
     try:
-        return _run_pipeline(
-            task_id,
-            params,
-            stop_at=stop_at,
-            voice_preview=voice_preview,
-            loomloom_video_request=loomloom_video_request,
-            allow_server_file_input=allow_server_file_input,
-            voxcpm_reference_audio=voxcpm_reference_audio,
-            voxcpm_prompt_audio=voxcpm_prompt_audio,
-            voxcpm_prompt_text=voxcpm_prompt_text,
+        with cancellation.scope(task_id):
+            return _run_pipeline(
+                task_id,
+                params,
+                stop_at=stop_at,
+                voice_preview=voice_preview,
+                loomloom_video_request=loomloom_video_request,
+                allow_server_file_input=allow_server_file_input,
+                voxcpm_reference_audio=voxcpm_reference_audio,
+                voxcpm_prompt_audio=voxcpm_prompt_audio,
+                voxcpm_prompt_text=voxcpm_prompt_text,
+            )
+    except cancellation.TaskCancelled:
+        current = sm.state.get_task(task_id) or {}
+        current.pop("task_id", None)
+        current.update(state=const.TASK_STATE_CANCELLED, cancelled=True)
+        sm.state.update_task(
+            task_id, **current,
         )
+        logger.info(f"generation cancelled: task_id={task_id}")
+        return sm.state.get_task(task_id)
     except Exception as exc:
         logger.exception(
             f"unexpected task pipeline failure, task_id: {task_id}, error: {exc}"

@@ -1,6 +1,6 @@
 # Lightweight frontend migration
 
-Baseline: upstream commit `ad5496f`. Fork: https://github.com/LucasGazula/MoneyPrinterTurbo. Working branch: `migration`.
+Baseline: upstream commit `ad5496f`. Project: https://github.com/LucasGazula/MoneyMachine (independently maintained; originally based on MoneyPrinterTurbo). Working branch: `migration`.
 
 The replacement is a Svelte/TypeScript application compiled to static files and served by FastAPI. Production needs no Streamlit or Node service. This checklist defines completion; a working generation form alone is insufficient.
 

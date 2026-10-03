@@ -24,7 +24,7 @@ from app.config import config
 from app.models import const
 from app.models.llm_provider import LLM_PROVIDER_REGISTRY
 from app.models.schema import VideoParams
-from app.services import bgm, state, task
+from app.services import bgm, cancellation, state, task
 from app.utils import file_security, utils
 
 
@@ -161,6 +161,7 @@ def update_settings(changes):
                 theme="light",
                 tts_server="azure-tts-v1",
                 voice_mode="tts",
+                gemini_voice_locale="pt-BR",
                 loomloom_candidate_count=3,
                 loomloom_script_duration_seconds=60,
             )
@@ -350,12 +351,14 @@ def task_detail(task_id):
         entry
         for entry in files
         if entry["name"].startswith("final-") and entry["name"].endswith(".mp4")
+        and live.get("state") != const.TASK_STATE_PROCESSING
     ]
     result = {
         "task_id": task_id,
         "state": const.TASK_STATE_COMPLETE if videos else None,
         "progress": 100 if videos else 0,
         **live,
+        "cancel_requested": cancellation.requested(task_id),
         "params": params,
         "files": files,
         "video_files": videos,

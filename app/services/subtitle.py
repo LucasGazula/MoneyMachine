@@ -1,8 +1,11 @@
 import json
+import os
 import os.path
 import re
 import tempfile
 from timeit import default_timer as timer
+
+import requests
 
 try:
     from faster_whisper import WhisperModel
@@ -18,6 +21,81 @@ device = config.whisper.get("device", "cpu")
 compute_type = config.whisper.get("compute_type", "int8")
 initial_prompt = config.whisper.get("initial_prompt", "") or None
 model = None
+
+
+def create_gemini(audio_file, subtitle_file: str = "", word_level: bool = False):
+    """Transcribe audio online with Gemini and write timed SRT subtitles."""
+    from google import genai
+
+    api_key = str(config.app.get("gemini_api_key", "") or "").strip() or os.getenv(
+        "GEMINI_API_KEY", ""
+    ).strip()
+    if not api_key:
+        raise ValueError("Configure the Gemini API key under Transcription & Subtitles")
+
+    client = genai.Client(api_key=api_key)
+    uploaded = client.files.upload(file=audio_file)
+    try:
+        response = requests.post(
+            "https://generativelanguage.googleapis.com/v1beta/interactions",
+            headers={"x-goog-api-key": api_key},
+            json={
+                "model": "gemini-3.5-transcribe",
+                "input": [{"type": "audio", "uri": uploaded.uri, "mime_type": uploaded.mime_type}],
+                "generation_config": {
+                    "transcription_config": {
+                        "mode": {"type": "verbatim", "timestamp_granularities": ["word"]}
+                    }
+                },
+            },
+            timeout=180,
+        )
+        response.raise_for_status()
+        interaction = response.json()
+    finally:
+        try:
+            client.files.delete(name=uploaded.name)
+        except Exception as error:
+            logger.warning(f"Could not delete temporary Gemini audio upload: {error}")
+
+    words = []
+    transcript = []
+    for step in interaction.get("steps", []):
+        for content in step.get("content", []):
+            if content.get("type") == "text" and content.get("text"):
+                transcript.append(content["text"])
+            for data in content.get("annotations", []):
+                if data.get("type") != "word_info":
+                    continue
+                label = str(data.get("text", "") or "").strip()
+                start = str(data.get("start_offset", "") or "").removesuffix("s")
+                end = str(data.get("end_offset", "") or "").removesuffix("s")
+                if label and start and end:
+                    words.append((label, float(start), float(end)))
+
+    if not words:
+        raise ValueError("Gemini transcription returned no word timestamps for subtitles")
+
+    subtitles = []
+    group = []
+    for word, start, end in words:
+        if group and (start - group[-1][2] > 0.7 or len(group) >= 8):
+            subtitles.append(group)
+            group = []
+        group.append((word, start, end))
+        if word_level or re.search(r"[.!?。！？]$", word):
+            subtitles.append(group)
+            group = []
+    if group:
+        subtitles.append(group)
+
+    if not subtitle_file:
+        subtitle_file = f"{audio_file}.srt"
+    with open(subtitle_file, "w", encoding="utf-8") as output:
+        for index, group in enumerate(subtitles, 1):
+            line = " ".join(word for word, _, _ in group)
+            output.write(utils.text_to_srt(index, line, group[0][1], group[-1][2]) + "\n")
+    return " ".join(transcript).strip() or " ".join(word for word, _, _ in words)
 
 
 def create(
@@ -49,7 +127,7 @@ def create(
                 f"********************************************\n"
                 f"this may be caused by network issue. \n"
                 f"please download the model manually and put it in the 'models' folder. \n"
-                f"see [README.md FAQ](https://github.com/harry0703/MoneyPrinterTurbo) for more details.\n"
+                f"see [README.md FAQ](https://github.com/LucasGazula/MoneyMachine) for more details.\n"
                 f"********************************************\n\n"
             )
             return None

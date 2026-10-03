@@ -28,7 +28,7 @@ Preserve the existing providers, generation parameters, local uploads, voice sam
 
 ## Brand Commitments
 
-Keep the MoneyPrinterTurbo product name. User-facing collaboration is in Brazilian Portuguese. Existing interface translations remain available.
+Use the MoneyMachine product name. Maintain it independently from MoneyPrinterTurbo. User-facing collaboration is in Brazilian Portuguese. Existing interface translations remain available.
 
 ## Product Principles
 

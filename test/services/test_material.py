@@ -1069,6 +1069,40 @@ class TestCoverrProvider(unittest.TestCase):
         self.assertEqual(result, ["/tmp/coverr-saved.mp4"])
 
 
+class TestScriptOrderMaterialDownload(unittest.TestCase):
+    def test_script_order_stops_when_first_round_exactly_covers_audio(self):
+        """A sync round that reaches the target must not start another download round."""
+        def search_videos(search_term, minimum_duration, video_aspect):
+            return [
+                material.MaterialInfo(
+                    provider="pexels",
+                    url=f"https://cdn.example.com/{search_term}-{index}.mp4",
+                    duration=5,
+                )
+                for index in (1, 2)
+            ]
+
+        with (
+            patch.object(
+                material,
+                "save_video",
+                side_effect=lambda video_url, save_dir="": video_url,
+            ),
+            patch.object(material, "_persist_material_sources"),
+        ):
+            result = material._download_videos_by_script_order(
+                task_id="script-order-exact",
+                search_terms=["first", "second", "third"],
+                search_videos=search_videos,
+                video_aspect=material.VideoAspect.portrait,
+                audio_duration=15,
+                max_clip_duration=5,
+                material_directory="",
+            )
+
+        self.assertEqual(len(result), 3)
+
+
 class TestWaveSpeedProvider(unittest.TestCase):
     """
     WaveSpeed AI 文生视频素材源。与其它素材源测试一致,全部用 unittest.mock

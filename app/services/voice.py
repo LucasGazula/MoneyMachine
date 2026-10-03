@@ -15,6 +15,7 @@ import time
 import unicodedata
 import wave
 from datetime import datetime, timedelta
+from functools import lru_cache
 from typing import Union
 from urllib.parse import urlparse
 from xml.sax.saxutils import escape, unescape
@@ -26,6 +27,7 @@ from edge_tts.srt_composer import Subtitle
 from loguru import logger
 
 from app.config import config
+from app.services import cancellation
 from app.utils import utils
 
 _DEFAULT_EDGE_TTS_TIMEOUT_SECONDS = 30.0
@@ -38,6 +40,12 @@ MINIMAX_TTS_DEFAULT_VOICE = "English_expressive_narrator"
 MINIMAX_TTS_MODELS = (
     "speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo",
     "speech-02-hd", "speech-02-turbo", "speech-01-hd", "speech-01-turbo",
+)
+GEMINI_TTS_MODELS = (
+    "gemini-2.5-flash-preview-tts",
+    "gemini-2.5-pro-preview-tts",
+    "gemini-3.8-flash-tts",
+    "gemini-3.8-flash-lite-tts",
 )
 GEMINI_TTS_VOICES = (
     ("Zephyr", "Bright"),
@@ -147,18 +155,63 @@ def get_siliconflow_voices() -> list[str]:
     ]
 
 
+@lru_cache(maxsize=2)
+def _gemini_voice_catalog(api_key: str) -> tuple[dict, ...]:
+    catalog = []
+    page_token = ""
+    while True:
+        response = requests.get(
+            "https://generativelanguage.googleapis.com/v1beta/voices",
+            headers={"x-goog-api-key": api_key},
+            params={"page_size": 1000, **({"page_token": page_token} if page_token else {})},
+            timeout=15,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        catalog.extend(payload.get("voices", []))
+        next_token = payload.get("next_page_token", "")
+        if not next_token or next_token == page_token:
+            return tuple(catalog)
+        page_token = next_token
+
+
+def get_gemini_voice_options(language_code: str = "", refresh: bool = False) -> dict:
+    """Return voices available to the selected model and Google's locale catalog."""
+    featured = [f"gemini:{voice}-{style}" for voice, style in GEMINI_TTS_VOICES]
+    model = config.app.get("gemini_tts_model_name") or GEMINI_TTS_MODELS[0]
+    api_key = config.app.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "")
+    if not model.startswith("gemini-3.8-") or not api_key:
+        return {"voices": featured, "locales": [], "model": model, "voice_details": {}}
+    if refresh:
+        _gemini_voice_catalog.cache_clear()
+    try:
+        entries = _gemini_voice_catalog(api_key)
+        locales = sorted({entry["language_code"] for entry in entries if entry.get("language_code")})
+        voices = []
+        voice_details = {}
+        featured_names = {name for name, _ in GEMINI_TTS_VOICES}
+        for entry in entries:
+            identifier = entry.get("id")
+            if not identifier or identifier in featured_names:
+                continue
+            if language_code and entry.get("language_code", "").lower() != language_code.lower():
+                continue
+            details = ", ".join(filter(None, (entry.get("language_code"), entry.get("accent"))))
+            label = entry.get("display_name") or identifier
+            value = f"gemini:{identifier} | {label}{f' ({details})' if details else ''}"
+            voices.append(value)
+            voice_details[value] = {
+                key: entry.get(key, "")
+                for key in ("display_name", "gender", "context", "persona", "pitch", "description")
+            }
+        return {"voices": list(dict.fromkeys((featured if not language_code else []) + voices)),
+                "locales": locales, "model": model, "voice_details": voice_details}
+    except (requests.RequestException, ValueError, KeyError) as error:
+        raise ValueError("Could not list Gemini voices; check the Google API key and try again") from error
+
+
 def get_gemini_voices() -> list[str]:
-    """
-    获取 Gemini TTS 官方预置音色列表。
-
-    Google 没有为这些音色发布性别元数据，因此下拉框使用官方风格描述，
-    避免把推测的性别写进持久化 voice id。音色目录来源：
-    https://ai.google.dev/gemini-api/docs/speech-generation#voice-options
-
-    Returns:
-        声音列表，格式为 ["gemini:Zephyr-Bright", "gemini:Puck-Upbeat", ...]
-    """
-    return [f"gemini:{voice}-{style}" for voice, style in GEMINI_TTS_VOICES]
+    return get_gemini_voice_options()["voices"]
 
 
 def get_mimo_voices() -> list[str]:
@@ -407,7 +460,10 @@ def parse_gemini_voice_name(voice_name: str | None) -> str:
     """从新旧 Gemini 下拉框值中提取 Google API 使用的预置音色名称。"""
     if not is_gemini_voice(voice_name or ""):
         return ""
-    return (voice_name or "").split(":", 1)[1].split("-", 1)[0].strip()
+    name = (voice_name or "").split(":", 1)[1]
+    if " | " in name:
+        return name.split(" | ", 1)[0].strip()
+    return name.strip() if name.startswith(("voice_", "voicekey_")) else name.split("-", 1)[0].strip()
 
 
 def is_mimo_voice(voice_name: str):
@@ -614,6 +670,7 @@ def _single_tts(
     voxcpm_prompt_audio: bytes | None = None,
     voxcpm_prompt_text: str = "",
 ) -> Union[SubMaker, None]:
+    cancellation.check()
     if is_no_voice(voice_name):
         duration_seconds = estimate_no_voice_duration(text)
         if not generate_silent_audio(duration_seconds, voice_file):
@@ -885,6 +942,7 @@ def _tts_with_pauses(
         cumulative_samples = 0
 
         for idx, (seg_type, seg_val) in enumerate(segments):
+            cancellation.check()
             if seg_type == "pause":
                 pause_duration = float(seg_val)
                 silence_wav = os.path.join(temp_dir, f"silence_{idx}.wav")
@@ -1260,6 +1318,7 @@ def _stream_edge_tts_sync_with_timeout(
     deadline = time.monotonic() + timeout_seconds
     while True:
         remaining_seconds = deadline - time.monotonic()
+        cancellation.check()
         if remaining_seconds <= 0:
             raise TimeoutError(
                 f"edge_tts stream timed out after {timeout_seconds:g}s"
@@ -1334,6 +1393,7 @@ def azure_tts_v1(
     text = text.strip()
     rate_str = convert_rate_to_percent(voice_rate)
     for i in range(3):
+        cancellation.check()
         try:
             logger.info(f"start, voice name: {voice_name}, try: {i + 1}")
 
@@ -1433,6 +1493,7 @@ def siliconflow_tts(
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
     for i in range(3):  # 尝试3次
+        cancellation.check()
         try:
             logger.info(
                 f"start siliconflow tts, model: {model}, voice: {voice}, try: {i + 1}"
@@ -1528,6 +1589,7 @@ def azure_tts_v2(
         return 0
 
     for i in range(3):
+        cancellation.check()
         try:
             logger.info(
                 f"start, voice name: {voice_name}, rate: {voice_rate}, try: {i + 1}"
@@ -1631,45 +1693,46 @@ def gemini_tts(
     _configure_pydub_ffmpeg(AudioSegment)
     
     try:
-        api_key = config.app.get("gemini_api_key", "")
+        api_key = config.app.get("gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "")
         if not api_key:
             logger.error("Gemini API key is not set")
             return None
 
-        logger.info(f"start, voice name: {voice_name}, try: 1")
-
-        generation_config = types.GenerateContentConfig(
-            response_modalities=["AUDIO"],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=voice_name
-                    )
-                )
-            ),
-        )
+        model_name = config.app.get("gemini_tts_model_name") or GEMINI_TTS_MODELS[0]
+        if model_name not in GEMINI_TTS_MODELS:
+            raise ValueError(f"Unsupported Gemini TTS model: {model_name}")
+        logger.info(f"start, model: {model_name}, voice name: {voice_name}, try: 1")
 
         # google-genai 使用统一 Client 调用文本和 TTS 模型。上下文管理器确保
         # 请求结束后释放 HTTP 连接，同时保留原有 PCM 转码和字幕时间轴逻辑。
         with genai.Client(api_key=api_key) as client:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash-preview-tts",
-                contents=text,
-                config=generation_config,
-            )
+            if model_name.startswith("gemini-3.8-"):
+                interaction = client.interactions.create(
+                    model=model_name,
+                    input=[{"type": "user_input", "content": [{"type": "text", "text": text}]}],
+                    response_format={"type": "audio"},
+                    generation_config={"speech_config": [{"voice": voice_name}]},
+                )
+                audio_data = getattr(interaction.output_audio, "data", None)
+            else:
+                generation_config = types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=voice_name
+                            )
+                        )
+                    ),
+                )
+                response = client.models.generate_content(
+                    model=model_name, contents=text, config=generation_config,
+                )
+                audio_data = next(
+                    (part.inline_data.data for part in response.candidates[0].content.parts
+                     if getattr(part, "inline_data", None)), None
+                ) if response.candidates and response.candidates[0].content else None
 
-        # 检查响应
-        if not response.candidates or not response.candidates[0].content:
-            logger.error("No audio content received from Gemini TTS")
-            return None
-            
-        # 获取音频数据
-        audio_data = None
-        for part in response.candidates[0].content.parts:
-            if hasattr(part, 'inline_data') and part.inline_data:
-                audio_data = part.inline_data.data
-                break
-                
         if not audio_data:
             logger.error("No audio data found in response")
             return None
@@ -1685,15 +1748,15 @@ def gemini_tts(
         # 尝试不同的音频格式 - Gemini可能返回不同的格式
         audio_segment = None
         
-        # Gemini返回Linear PCM格式，按照文档参数解析
+        # Gemini 3.8 returns WAV; 2.5 returns raw 24 kHz PCM.
         try:
-            audio_segment = AudioSegment.from_file(
-                io.BytesIO(audio_bytes), 
-                format="raw",
-                frame_rate=24000,  # Gemini TTS默认采样率
-                channels=1,        # 单声道
-                sample_width=2     # 16-bit
-            )
+            if model_name.startswith("gemini-3.8-"):
+                audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes), format="wav")
+            else:
+                audio_segment = AudioSegment.from_file(
+                    io.BytesIO(audio_bytes), format="raw", frame_rate=24000,
+                    channels=1, sample_width=2,
+                )
         except Exception as e:
             logger.error(f"Failed to load PCM audio: {e}")
             return None
@@ -1768,6 +1831,7 @@ def mimo_tts(
     _configure_pydub_ffmpeg(AudioSegment)
 
     for i in range(3):
+        cancellation.check()
         try:
             logger.info(
                 f"start mimo tts, model: {model_name}, voice: {voice_name}, try: {i + 1}"
@@ -2031,6 +2095,7 @@ def minimax_tts(text: str, voice_id: str, voice_rate: float, voice_file: str, vo
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     for attempt in range(3):
+        cancellation.check()
         try:
             logger.info(f"start MiniMax TTS, model: {model}, voice: {voice_id}, try: {attempt + 1}")
             response = requests.post(url, json=payload, headers=headers, timeout=120)
@@ -2102,6 +2167,7 @@ def elevenlabs_tts(
     _NON_RETRYABLE_STATUSES = {"voice_disabled", "voice_access_denied", "unauthorized"}
 
     for i in range(3):
+        cancellation.check()
         try:
             logger.info(f"start elevenlabs tts, voice_id: {voice_id}, try: {i + 1}")
             ensure_file_path_exists(voice_file)
@@ -2185,6 +2251,7 @@ def _openai_compatible_tts(
     # speed 仅调节语速，不能作为音量参数使用。
 
     for i in range(3):
+        cancellation.check()
         temporary_audio = None
         try:
             logger.info(f"start {provider} tts, voice: {voice}, try: {i + 1}")
@@ -2411,6 +2478,7 @@ def fish_audio_tts(
         payload["reference_id"] = reference_id
 
     for i in range(3):
+        cancellation.check()
         try:
             logger.info(
                 f"start fish audio tts, model: {model_name}, "
@@ -2673,6 +2741,7 @@ def voxcpm_tts(
     _configure_pydub_ffmpeg(AudioSegment)
 
     for attempt in range(3):
+        cancellation.check()
         temporary_audio = None
         response = None
         try:

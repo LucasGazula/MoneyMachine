@@ -9,12 +9,12 @@ RUN npm run build
 FROM python:3.11-slim-bullseye
 
 # Set the working directory in the container
-WORKDIR /MoneyPrinterTurbo
+WORKDIR /MoneyMachine
 
-# 设置/MoneyPrinterTurbo目录权限为777
-RUN chmod 777 /MoneyPrinterTurbo
+# 设置/MoneyMachine目录权限为777
+RUN chmod 777 /MoneyMachine
 
-ENV PYTHONPATH="/MoneyPrinterTurbo"
+ENV PYTHONPATH="/MoneyMachine"
 
 # 本地用户默认继续优先使用国内镜像；GitHub Actions 发布 GHCR 镜像时使用 default，
 # 避免海外 runner 访问国内镜像过慢导致镜像发布长时间卡住。
@@ -111,10 +111,10 @@ EXPOSE 8080
 CMD ["python", "-m", "uvicorn", "app.asgi:app", "--host=0.0.0.0", "--port=8501"]
 
 # 1. Build the Docker image using the following command
-# docker build -t moneyprinterturbo .
+# docker build -t moneymachine .
 
 # 2. Run the Docker container using the following command
 ## For Linux or MacOS:
-# docker run -v $(pwd)/config.toml:/MoneyPrinterTurbo/config.toml -v $(pwd)/storage:/MoneyPrinterTurbo/storage -p 127.0.0.1:8501:8501 moneyprinterturbo
+# docker run -v $(pwd)/config.toml:/MoneyMachine/config.toml -v $(pwd)/storage:/MoneyMachine/storage -p 127.0.0.1:8501:8501 moneymachine
 ## For Windows:
-# docker run -v ${PWD}/config.toml:/MoneyPrinterTurbo/config.toml -v ${PWD}/storage:/MoneyPrinterTurbo/storage -p 127.0.0.1:8501:8501 moneyprinterturbo
+# docker run -v ${PWD}/config.toml:/MoneyMachine/config.toml -v ${PWD}/storage:/MoneyMachine/storage -p 127.0.0.1:8501:8501 moneymachine

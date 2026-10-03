@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import io
 import os
 import shutil
 import unittest
@@ -69,7 +70,8 @@ class TestVoiceService(unittest.TestCase):
         )
 
     def test_get_gemini_voices_matches_documented_catalog(self):
-        voices = vs.get_gemini_voices()
+        with patch.object(vs.config, "app", dict(vs.config.app, gemini_api_key="")):
+            voices = vs.get_gemini_voices()
 
         self.assertEqual(len(voices), 30)
         self.assertEqual(
@@ -94,6 +96,86 @@ class TestVoiceService(unittest.TestCase):
         )
         self.assertEqual(vs.parse_gemini_voice_name("gemini:Charon-Male"), "Charon")
         self.assertEqual(vs.parse_gemini_voice_name("Charon-Male"), "")
+        self.assertEqual(
+            vs.parse_gemini_voice_name("gemini:voice_custom-123 | Nova voz"),
+            "voice_custom-123",
+        )
+
+    def test_gemini_38_lists_extended_voices(self):
+        with (
+            patch.object(vs.config, "app", dict(vs.config.app,
+                gemini_api_key="test-key", gemini_tts_model_name="gemini-3.8-flash-tts")),
+            patch.object(vs.requests, "get") as get,
+        ):
+            get.return_value.json.return_value = {"voices": [
+                {"id": "voice_custom-123", "display_name": "Nova voz"}
+            ]}
+            voices = vs.get_gemini_voices()
+        self.assertIn("gemini:voice_custom-123 | Nova voz", voices)
+        self.assertIn("gemini:Kore-Firm", voices)
+        get.assert_called_once()
+
+    def test_gemini_voices_filter_locale_and_selected_model(self):
+        with (
+            patch.object(vs.config, "app", dict(vs.config.app,
+                gemini_api_key="locale-test-key", gemini_tts_model_name="gemini-3.8-flash-tts")),
+            patch.object(vs.requests, "get") as get,
+        ):
+            get.return_value.json.return_value = {"voices": [
+                {"id": "pt-br-advisor-1", "display_name": "Conselheira", "language_code": "pt-BR", "region_code": "BR",
+                 "gender": "female", "context": "Wellness & Culture | Conversational / Edu", "description": "Voz acolhedora"},
+                {"id": "en-us-advisor-1", "display_name": "Advisor", "language_code": "en-US", "region_code": "US"},
+            ]}
+            options = vs.get_gemini_voice_options("pt-BR")
+            self.assertEqual(options["locales"], ["en-US", "pt-BR"])
+            self.assertEqual(len(options["voices"]), 1)
+            self.assertIn("pt-br-advisor-1", options["voices"][0])
+            self.assertEqual(options["voice_details"][options["voices"][0]]["gender"], "female")
+            self.assertIn("Wellness & Culture", options["voice_details"][options["voices"][0]]["context"])
+            self.assertNotIn("en-us-advisor-1", str(options["voices"]))
+            get.assert_called_once()
+        with patch.object(vs.config, "app", dict(vs.config.app,
+            gemini_api_key="locale-test-key", gemini_tts_model_name="gemini-2.5-pro-preview-tts")):
+            options = vs.get_gemini_voice_options("pt-BR")
+        self.assertEqual(len(options["voices"]), 30)
+        self.assertEqual(options["locales"], [])
+
+    def test_gemini_38_uses_interactions_and_wav_audio(self):
+        tone = AudioSegment.silent(duration=800).set_frame_rate(24000)
+        output = io.BytesIO()
+        tone.export(output, format="wav")
+        wav_data = output.getvalue()
+
+        class FakeClient:
+            requests = []
+
+            def __init__(self, **kwargs):
+                self.key = kwargs["api_key"]
+                self.interactions = SimpleNamespace(create=self.create)
+
+            def create(self, **kwargs):
+                self.requests.append(kwargs)
+                return SimpleNamespace(output_audio=SimpleNamespace(data=base64.b64encode(wav_data).decode()))
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            file = str(Path(directory) / "gemini.mp3")
+            with (
+                patch("google.genai.Client", FakeClient),
+                patch.object(vs.config, "app", dict(vs.config.app,
+                    gemini_api_key="test-key", gemini_tts_model_name="gemini-3.8-flash-tts")),
+            ):
+                result = vs.gemini_tts("Olá mundo.", "voice_custom-123", 1, file)
+            self.assertIsNotNone(result)
+            self.assertTrue(Path(file).is_file())
+            self.assertEqual(FakeClient.requests[0]["model"], "gemini-3.8-flash-tts")
+            self.assertEqual(FakeClient.requests[0]["generation_config"]["speech_config"],
+                             [{"voice": "voice_custom-123"}])
 
     def test_no_voice_tts_generates_silent_audio_and_subtitle_timeline(self):
         """
@@ -511,7 +593,7 @@ class TestVoiceService(unittest.TestCase):
         with patch("google.genai.Client", _FakeClient), patch.object(
             vs.config,
             "app",
-            dict(vs.config.app, gemini_api_key="test-key"),
+            dict(vs.config.app, gemini_api_key="test-key", gemini_tts_model_name="gemini-2.5-flash-preview-tts"),
         ):
             sub_maker = vs.gemini_tts(
                 text=text,

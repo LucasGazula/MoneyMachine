@@ -224,7 +224,7 @@ def _video_fit_mode(value: str) -> str:
 # 只有这些取值会请求外部音乐生成服务，因此只有它们消费配乐提示词。取值需与
 # app/services/task.py 的 _VIDEO_MUSIC_PROVIDERS 保持一致；集中定义后，新增
 # 配乐供应商不会再次遗漏 --bgm-type 校验、批量校验和提示词参数。
-_CLI_MUSIC_BGM_TYPES = ("sonilo", "elevenlabs")
+_CLI_MUSIC_BGM_TYPES = ("sonilo", "elevenlabs", "lyria")
 _BGM_TYPE_CHOICES_TEXT = "none, random, custom, " + ", ".join(_CLI_MUSIC_BGM_TYPES)
 _BGM_TYPE_METAVAR = "{none,random,custom," + ",".join(_CLI_MUSIC_BGM_TYPES) + "}"
 
@@ -243,7 +243,7 @@ def _bgm_type(value: str) -> str:
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate MoneyPrinterTurbo videos without the WebUI.\n\n"
+            "Generate MoneyMachine videos without the WebUI.\n\n"
             "Provider settings and credentials are read from config.toml.\n"
             "Default full-video generation requires a configured LLM and Pexels API key.\n"
             "The default Edge TTS voice requires no API key."
@@ -521,7 +521,8 @@ Batch manifests:
         metavar=_BGM_TYPE_METAVAR,
         help=(
             "background music mode; Sonilo reads its API key from config.toml or "
-            "SONILO_API_KEY, ElevenLabs from config.toml or ELEVENLABS_API_KEY; "
+            "SONILO_API_KEY, ElevenLabs from config.toml or ELEVENLABS_API_KEY, "
+            "Google Lyria from the Gemini key in config.toml or GEMINI_API_KEY; "
             "--bgm-file implies custom when omitted (default: random)"
         ),
     )
@@ -535,7 +536,7 @@ Batch manifests:
         default=None,
         help=(
             "optional music style prompt for the selected AI background music "
-            "provider (sonilo or elevenlabs); the provider's own length limit "
+            "provider (sonilo, elevenlabs or lyria); the provider's own length limit "
             "is enforced before generation"
         ),
     )
@@ -799,7 +800,7 @@ Batch manifests:
         and args.bgm_type not in _CLI_MUSIC_BGM_TYPES
     ):
         parser.error(
-            "--video-music-prompt requires --bgm-type sonilo or elevenlabs"
+            "--video-music-prompt requires --bgm-type sonilo, elevenlabs or lyria"
         )
 
     if (
@@ -1313,7 +1314,7 @@ def _validate_batch_task_params(
         raise ValueError("sonilo_bgm_prompt requires bgm_type=sonilo")
     if params.video_music_prompt and params.bgm_type not in _CLI_MUSIC_BGM_TYPES:
         raise ValueError(
-            "video_music_prompt requires bgm_type=sonilo or elevenlabs"
+            "video_music_prompt requires bgm_type=sonilo, elevenlabs or lyria"
         )
 
 

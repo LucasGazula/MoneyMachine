@@ -25,6 +25,32 @@ RUN_INTEGRATION_TESTS = os.environ.get("MPT_RUN_INTEGRATION_TESTS", "").lower() 
 
 
 class TestTaskService(unittest.TestCase):
+    def test_generate_subtitle_uses_gemini_for_uploaded_narration(self):
+        task_id = "test-gemini-subtitle"
+        task_dir = utils.task_dir(task_id)
+        params = VideoParams(
+            video_subject="test", video_script="Olá mundo.", subtitle_enabled=True,
+            subtitle_display_mode="word_by_word",
+        )
+
+        def fake_transcribe(audio_file, subtitle_file, word_level):
+            self.assertEqual(audio_file, "uploaded.wav")
+            self.assertTrue(word_level)
+            Path(subtitle_file).write_text(
+                "1\n00:00:00,100 --> 00:00:00,400\nOlá\n\n", encoding="utf-8"
+            )
+
+        try:
+            with (
+                patch.object(tm.config, "app", dict(tm.config.app, subtitle_provider="gemini")),
+                patch.object(tm.subtitle, "create_gemini", side_effect=fake_transcribe) as transcribe,
+            ):
+                result = tm.generate_subtitle(task_id, params, "Olá mundo.", None, "uploaded.wav")
+            self.assertTrue(result.endswith("subtitle.srt"))
+            transcribe.assert_called_once()
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
     def setUp(self):
         # 发布 Future 注册表是进程级状态。测试间清理可以避免某个模拟 Future
         # 影响后续恢复测试，同时不会触碰真正线程池中的生产任务。
@@ -119,6 +145,134 @@ class TestTaskService(unittest.TestCase):
             params.video_fit_mode,
         )
 
+    def test_get_video_materials_does_not_duplicate_non_batch_sources(self):
+        """未做批次分配的同步源只应准备一条成片所需的素材时长。"""
+        for source, expected_duration in (("wavespeed", 12), ("pexels", 36)):
+            with self.subTest(source=source):
+                params = VideoParams(
+                    video_subject="test",
+                    video_source=source,
+                    video_count=3,
+                    match_materials_to_script=True,
+                )
+                with patch.object(
+                    tm.material,
+                    "download_videos",
+                    return_value=["clip.mp4"],
+                ) as download_videos:
+                    result = tm.get_video_materials(
+                        "material-duration",
+                        params,
+                        ["term"],
+                        12,
+                    )
+
+                self.assertEqual(result, ["clip.mp4"])
+                self.assertEqual(
+                    download_videos.call_args.kwargs["audio_duration"],
+                    expected_duration,
+                )
+
+    def test_generate_final_videos_reuses_identical_sync_combination(self):
+        """非批次同步输出相同素材时只应执行一次组合。"""
+        params = VideoParams(
+            video_subject="test",
+            video_source="wavespeed",
+            video_count=3,
+            match_materials_to_script=True,
+            video_transition_mode=None,
+        )
+
+        with (
+            patch.object(tm.video, "combine_videos") as combine_videos,
+            patch.object(tm.video, "generate_video", return_value=True) as generate_video,
+            patch.object(tm.sm.state, "update_task"),
+        ):
+            final_paths, combined_paths, warnings = tm.generate_final_videos(
+                task_id="reuse-sync-combination",
+                params=params,
+                downloaded_videos=["material.mp4"],
+                audio_file="audio.mp3",
+                subtitle_path="",
+                audio_duration=5,
+            )
+
+        self.assertEqual(combine_videos.call_count, 1)
+        self.assertEqual(len(final_paths), 3)
+        self.assertEqual(
+            [os.path.basename(path) for path in combined_paths],
+            ["combined-1.mp4"] * 3,
+        )
+        self.assertEqual(
+            [os.path.basename(call.kwargs["video_path"]) for call in generate_video.call_args_list],
+            ["combined-1.mp4"] * 3,
+        )
+        self.assertEqual(warnings, [])
+
+    def test_generate_final_videos_reuses_identical_final_without_bgm(self):
+        """无 BGM 的相同同步输出不应重复编码最终视频。"""
+        params = VideoParams(
+            video_subject="test",
+            video_source="wavespeed",
+            video_count=3,
+            match_materials_to_script=True,
+            video_transition_mode=None,
+            bgm_type="",
+        )
+
+        with (
+            patch.object(tm.video, "combine_videos"),
+            patch.object(tm.video, "generate_video", return_value=True) as generate_video,
+            patch.object(tm.shutil, "copyfile") as copyfile,
+            patch.object(tm.sm.state, "update_task"),
+        ):
+            final_paths, _, warnings = tm.generate_final_videos(
+                task_id="reuse-sync-final",
+                params=params,
+                downloaded_videos=["material.mp4"],
+                audio_file="audio.mp3",
+                subtitle_path="",
+                audio_duration=5,
+            )
+
+        self.assertEqual(generate_video.call_count, 1)
+        self.assertEqual(copyfile.call_count, 2)
+        self.assertEqual(len(final_paths), 3)
+        self.assertEqual(warnings, [])
+
+    def test_generate_final_videos_reuses_identical_final_with_fixed_bgm(self):
+        """固定预设或上传 BGM 的相同同步输出不应重复混音。"""
+        for bgm_type in ("preset", "custom"):
+            with self.subTest(bgm_type=bgm_type):
+                params = VideoParams(
+                    video_subject="test",
+                    video_source="wavespeed",
+                    video_count=3,
+                    match_materials_to_script=True,
+                    video_transition_mode=None,
+                    bgm_type=bgm_type,
+                    bgm_file="same-song.mp3",
+                )
+
+                with (
+                    patch.object(tm.video, "combine_videos"),
+                    patch.object(tm.video, "generate_video", return_value=True) as generate_video,
+                    patch.object(tm.shutil, "copyfile") as copyfile,
+                    patch.object(tm.sm.state, "update_task"),
+                ):
+                    _, _, warnings = tm.generate_final_videos(
+                        task_id=f"reuse-sync-{bgm_type}",
+                        params=params,
+                        downloaded_videos=["material.mp4"],
+                        audio_file="audio.mp3",
+                        subtitle_path="",
+                        audio_duration=5,
+                    )
+
+                self.assertEqual(generate_video.call_count, 1)
+                self.assertEqual(copyfile.call_count, 2)
+                self.assertEqual(warnings, [])
+
     def test_generate_final_videos_uses_generated_sonilo_music(self):
         """Sonilo 必须针对每条拼接后的视频生成配乐，并传给最终混音。"""
         params = VideoParams(
@@ -192,6 +346,26 @@ class TestTaskService(unittest.TestCase):
                 "elevenlabs-bgm-1.mp3"
             )
         )
+
+    def test_generate_final_videos_uses_lyria_with_subject_fallback(self):
+        params = VideoParams(video_subject="mountain sunrise", bgm_type="lyria")
+        with (
+            patch.object(tm.video, "combine_videos"),
+            patch.object(
+                tm.lyria_music,
+                "generate_bgm",
+                side_effect=lambda **kwargs: kwargs["output_path"],
+            ) as generate_bgm,
+            patch.object(tm.video, "generate_video") as generate_video,
+            patch.object(tm.sm.state, "update_task"),
+        ):
+            _, _, warnings = tm.generate_final_videos(
+                task_id="lyria-task", params=params, downloaded_videos=["material.mp4"],
+                audio_file="audio.mp3", subtitle_path="", audio_duration=45,
+            )
+        self.assertEqual(warnings, [])
+        self.assertIn("mountain sunrise", generate_bgm.call_args.kwargs["prompt"])
+        self.assertTrue(generate_video.call_args.kwargs["bgm_file_override"].endswith("lyria-bgm-1.mp3"))
 
     def test_generate_final_videos_falls_back_on_elevenlabs_failure(self):
         """ElevenLabs 暂时失败时必须保留无配乐视频和结构化警告。"""

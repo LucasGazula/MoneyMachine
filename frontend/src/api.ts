@@ -12,9 +12,16 @@ export const speechLabels: Record<string, string> = {
   'azure-tts-v1': 'Microsoft Edge TTS — no API key', 'azure-tts-v2': 'Microsoft Azure Speech — API key',
   'gemini-tts': 'Google Gemini — text to speech',
 };
+export const geminiTtsModels = [
+  {value:'gemini-2.5-flash-preview-tts',label:'Gemini 2.5 Flash TTS'},
+  {value:'gemini-2.5-pro-preview-tts',label:'Gemini 2.5 Pro TTS'},
+  {value:'gemini-3.8-flash-tts',label:'Gemini 3.8 Flash TTS'},
+  {value:'gemini-3.8-flash-lite-tts',label:'Gemini 3.8 Flash-Lite TTS'},
+];
 export const musicLabels: Record<string, string> = {
   '': 'No music', random: 'Random local music — no API', preset: 'Built-in music — no API',
   custom: 'Uploaded music — no API', sonilo: 'Sonilo — AI music', elevenlabs: 'ElevenLabs — AI music',
+  lyria: 'Google Lyria 3.5 — AI music',
 };
 
 export async function api(path: string, body?: unknown, method?: string): Promise<any> {

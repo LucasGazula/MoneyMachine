@@ -8,6 +8,7 @@ from app.controllers.manager.memory_manager import InMemoryTaskManager
 from app.models import const
 from app.models.schema import VideoParams
 from app.services import state as sm
+from app.services import cancellation
 from app.services import task as tm
 from app.services.loomloom import LoomLoomConfirmedVideoRequest
 from app.utils.logging_utils import format_log_record
@@ -116,6 +117,7 @@ def _run_generation(
         )
         return failure
     finally:
+        cancellation.discard(task_id)
         if log_handler_id is not None:
             try:
                 logger.remove(log_handler_id)
@@ -166,6 +168,7 @@ def submit_generation(
         progress=0,
         video_subject=task_params.video_subject or task_params.video_script or task_id,
     )
+    cancellation.prepare(task_id)
     try:
         _task_manager.add_task(
             _run_generation,
@@ -179,6 +182,7 @@ def submit_generation(
             voxcpm_prompt_text=voxcpm_prompt_text_snapshot,
         )
     except Exception as exc:
+        cancellation.discard(task_id)
         # 调度失败与流水线失败一样必须成为可查询状态，避免任务管理器永久显示
         # “生成中”。保留异常类型便于从 Docker 或本机日志快速定位队列问题。
         error = f"{type(exc).__name__}: {exc}"

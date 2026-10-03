@@ -40,6 +40,85 @@ def test_bootstrap_settings_and_locale_do_not_expose_credentials(client):
     assert client.get("/api/v1/studio/locales/missing").status_code == 400
 
 
+def test_cancel_generation_stops_before_the_next_stage(client):
+    from app.services import task
+    from app.services.state import MemoryState
+
+    store = MemoryState()
+    identifier = "cancel-generation"
+
+    def cancel_during_script(*args):
+        store.patch_task(identifier, remote_run_id="already-submitted-run")
+        response = client.post(f"/api/v1/studio/tasks/{identifier}/cancel")
+        assert response.status_code == 200
+        return "A script that must never reach narration."
+
+    with (
+        patch.object(state, "state", store),
+        patch.object(task.utils, "check_ffmpeg_ready", return_value=True),
+        patch.object(task, "generate_script", side_effect=cancel_during_script),
+        patch.object(task, "generate_audio") as audio,
+    ):
+        task.start(identifier, VideoParams(video_subject="Cancel", video_source="local"))
+    audio.assert_not_called()
+    assert store.get_task(identifier)["state"] == const.TASK_STATE_CANCELLED
+    assert store.get_task(identifier)["remote_run_id"] == "already-submitted-run"
+
+
+def test_cancel_queued_generation_never_starts_the_pipeline(client):
+    from app.services import task, webui_task
+    from app.services.state import MemoryState
+
+    store = MemoryState()
+    with (
+        patch.object(state, "state", store),
+        patch.object(webui_task._task_manager, "add_task") as submit,
+        patch.object(task, "_run_pipeline") as pipeline,
+    ):
+        webui_task.submit_generation("queued-task", VideoParams(video_subject="Queued"), capture_logs=False)
+        response = client.post("/api/v1/studio/tasks/queued-task/cancel")
+        assert response.status_code == 200
+        assert response.json()["cancel_requested"]
+        worker = submit.call_args.args[0]
+        result = worker(**submit.call_args.kwargs)
+        assert result["state"] == const.TASK_STATE_CANCELLED
+        pipeline.assert_not_called()
+
+
+def test_cancel_finished_generation_is_idempotent_and_missing_task_is_rejected(client):
+    from app.services import cancellation
+    from app.services.state import MemoryState
+
+    store = MemoryState()
+    store.update_task("finished-task", state=const.TASK_STATE_COMPLETE, progress=100)
+    with patch.object(state, "state", store):
+        for _ in range(2):
+            response = client.post("/api/v1/studio/tasks/finished-task/cancel")
+            assert response.status_code == 200
+            assert response.json()["state"] == const.TASK_STATE_COMPLETE
+        assert not cancellation.requested("finished-task")
+        assert client.post("/api/v1/studio/tasks/no-such-task/cancel").status_code == 404
+
+
+def test_gemini_voice_route_passes_language_and_model_options(client):
+    from app.services import voice
+
+    payload = {"voices": ["gemini:pt-br-advisor-1 | Conselheira"],
+               "locales": ["en-US", "pt-BR"], "model": "gemini-3.8-flash-tts"}
+    with patch.object(voice, "get_gemini_voice_options", return_value=payload) as options:
+        response = client.get("/api/v1/studio/voices?provider=gemini-tts&language_code=pt-BR")
+    assert response.status_code == 200
+    assert response.json() == payload
+    options.assert_called_once_with("pt-BR", False)
+
+
+def test_subtitle_font_is_served_from_the_font_directory(client):
+    response = client.get("/api/v1/studio/fonts/Charm-Regular.ttf")
+    assert response.status_code == 200
+    assert response.content[:4] == b"\x00\x01\x00\x00"
+    assert client.get("/api/v1/studio/fonts/config.toml").status_code == 400
+
+
 def test_settings_mask_credentials_embedded_in_urls(client):
     with (
         patch.dict(config.proxy, {"https": "http://user:password@proxy.local:8080"}),
@@ -60,6 +139,7 @@ def test_cookie_authentication_covers_native_media_and_revokes_on_key_change():
     client = TestClient(asgi.app)
     with patch.dict(config.app, {"api_key": "chave-é"}):
         assert client.get("/api/v1/studio/bootstrap").status_code == 401
+        assert client.get("/api/v1/studio/fonts/Charm-Regular.ttf").status_code == 401
         assert (
             client.post("/api/v1/studio/session", json={"key": "wrong"}).status_code
             == 401
@@ -94,13 +174,14 @@ def test_settings_validate_before_updating_and_queue_defaults(client):
                 "ui": {
                     "tts_server": "kokoro",
                     "voice_mode": "tts",
+                    "gemini_voice_locale": "en-US",
                     "video_terms": None,
                     "subtitle_animation": "pop_spring",
                 }
             },
         )
         assert response.status_code == 200 and response.json()["pending"]
-        assert update.call_count == 4
+        assert update.call_count == 5
         update.reset_mock()
         assert (
             client.patch(
@@ -406,6 +487,23 @@ def test_real_local_upload_narration_render_and_download(client, tmp_path):
         assert detail["video_files"]
         result = client.get(detail["video_files"][0]["url"])
         assert result.status_code == 200 and len(result.content) > 1000
+
+
+def test_preview_waits_until_the_render_finishes(client, tmp_path):
+    from app.services.state import MemoryState
+
+    folder = tmp_path / "preview-task"
+    folder.mkdir()
+    (folder / "final-1.mp4").write_bytes(b"partial-render")
+    store = MemoryState()
+    store.update_task("preview-task", state=const.TASK_STATE_PROCESSING, progress=90)
+    with patch.object(state, "state", store), patch.object(studio, "task_path", return_value=folder):
+        detail = client.get("/api/v1/studio/tasks/preview-task").json()
+        assert detail["video_files"] == []
+        (folder / "final-1.mp4").write_bytes(b"completed-render")
+        store.update_task("preview-task", state=const.TASK_STATE_COMPLETE, progress=100)
+        detail = client.get("/api/v1/studio/tasks/preview-task").json()
+        assert detail["video_files"][0]["size"] == len(b"completed-render")
 
 
 def test_disk_history_files_ranges_and_busy_delete(client, tmp_path):
