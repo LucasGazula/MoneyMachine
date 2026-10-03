@@ -1,5 +1,5 @@
 ---
-name: MoneyPrinterTurbo
+name: MoneyMachine
 description: A quiet editing workbench for local video production.
 colors:
   accent: "#265c42"
@@ -108,13 +108,13 @@ components:
     padding: "25px 30px"
 ---
 
-# Design System: MoneyPrinterTurbo
+# Design System: MoneyMachine
 
 ## Overview
 
 **Creative North Star: "Editing Workbench"**
 
-MoneyPrinterTurbo uses a calm, compact visual language for sustained production work. Warm neutral surroundings separate the white working surfaces from the controls and output. A restrained forest-green accent identifies actions, selection and progress.
+MoneyMachine uses a calm, compact visual language for sustained production work. Warm neutral surroundings separate the white working surfaces from the controls and output. A restrained forest-green accent identifies actions, selection and progress.
 
 The system favors native browser controls, system UI typography and flat surfaces because it runs locally on PCs and Raspberry Pi installations. These choices are intentional. The product name and small geometric SVG brand mark remain visible; content and media are the working material.
 
